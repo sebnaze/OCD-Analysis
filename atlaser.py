@@ -40,7 +40,7 @@ class Atlaser:
 
     def get_rois_node_indices(self, rois):
         """ Get node indices of ROIs based on their names"""
-        node_ids = np.concatenate([get_roi_node_indices(roi=reg) for reg in rois])
+        node_ids = np.concatenate([self.get_roi_node_indices(roi=reg) for reg in rois])
         return node_ids
 
     def get_roi_atlas_indices(self, roi):

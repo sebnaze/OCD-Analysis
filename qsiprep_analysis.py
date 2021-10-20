@@ -108,7 +108,8 @@ def create_nifti_imgs(atlas_img, stats, pvals, node_ids, s_thresh=1.8, p_thresh=
     atlas_data = atlas_img.get_fdata()
     stats_data = np.zeros((atlas_data.shape))
     pvals_data = np.ones((atlas_data.shape))
-
+    sig_stats_data = np.zeros((atlas_data.shape))
+    
     # populate stats data
     sig_ids = np.where(np.abs(stats)>=s_thresh)[0]
     sig_node_ids = node_ids[sig_ids]
@@ -123,10 +124,16 @@ def create_nifti_imgs(atlas_img, stats, pvals, node_ids, s_thresh=1.8, p_thresh=
         atlas_ids = np.where(atlas_data==idx)
         pvals_data[atlas_ids] = pvals[sig_ids[i]]
 
+    # populate union data (only stats for which p<0.05)
+    sig_ids = np.where( (1-pvals_data) >= 0.95 )
+    if len(sig_ids)>0:
+        sig_stats_data[sig_ids] = stats_data[sig_ids]
+
     # create and return new nifti img
     stats_img = nib.Nifti1Image(stats_data, atlas_img.affine, atlas_img.header)
     pvals_img = nib.Nifti1Image(1-pvals_data, atlas_img.affine, atlas_img.header)
-    return stats_img, pvals_img
+    sig_stats_img = nib.Nifti1Image(sig_stats_data, atlas_img.affine, atlas_img.header)
+    return stats_img, pvals_img, sig_stats_img
 
 
 def get_fspt_node_ids(atlas):
@@ -345,7 +352,7 @@ def plot_conns_matrices(conns, atlases, metrics, scale='log', vmin=None, vmax=No
         plt.show(block=False)
 
 
-def run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal', 'Put', 'Caud', 'Acc'], threshold=True, quantile=0.5, n_min_edges=0, verbose=True):
+def run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal', 'Put', 'Caud', 'Acc'], threshold=True, quantile=0.8, n_min_edges=0, verbose=True):
     """ Perform 'row-wise' t-test on ROIs, with FDR correction """
     outp = dict( ( ( (atlas,metric,roi), None ) for atlas,metric,roi in itertools.product(atlases,metrics,subrois) ) )
     mcm = ['bonferroni', 'sidak', 'holm-sidak', 'holm', 'simes-hochberg', 'hommel', 'fdr_bh', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'] # multiple comparison method
@@ -411,20 +418,25 @@ def run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal', 
                                              nn_Fr_node_ids=Fr_node_ids[nni], nn_Fr_node_names=Fr_node_names[nni] )
     return outp
 
-def plot_stats_on_glass_brain(atlas, metric, roi, outp):
+def plot_stats_on_glass_brain(atlas, metric, roi, outp, p_corrected=None):
     """ Display color-coded T stats and p-values on glass brain """
     # get atlas and ids
     atlas_img = load_img(os.path.join(atlas_dir, atlas+'MNI_lps_mni.nii.gz'))
     # create nifti imgs
-    stats_img, pvals_img = create_nifti_imgs(atlas_img, stats=outp[atlas,metric,roi]['stats'], pvals=outp[atlas,metric,roi]['pvals'], node_ids=outp[atlas,metric,roi]['nn_Fr_node_ids'], p_thresh=1.)
+    if (p_corrected==None):
+        stats_img, pvals_img, sig_stats_img = create_nifti_imgs(atlas_img, stats=outp[atlas,metric,roi]['stats'], pvals=outp[atlas,metric,roi]['pvals'], node_ids=outp[atlas,metric,roi]['nn_Fr_node_ids'], p_thresh=1.)
+    else:
+        stats_img, pvals_img, sig_stats_img = create_nifti_imgs(atlas_img, stats=outp[atlas,metric,roi]['stats'], pvals=outp[atlas,metric,roi]['p_corrected'][p_corrected], node_ids=outp[atlas,metric,roi]['nn_Fr_node_ids'], p_thresh=1.)
     # plotting
-    fig = plt.figure(figsize=[20,4])
+    fig = plt.figure(figsize=[30,4])
     plt.suptitle('{} {}'.format(atlas,metric))
-    ax_s = fig.add_subplot(1,2,1)
-    ax_p = fig.add_subplot(1,2,2)
+    ax_s = fig.add_subplot(1,3,1)
+    ax_p = fig.add_subplot(1,3,2)
+    ax_sp = fig.add_subplot(1,3,3)
     display1 = plot_glass_brain(stats_img, display_mode='lzry', colorbar=True, title=roi, plot_abs=False, vmin=-5, vmax=5, axes=ax_s)
     display2 = plot_glass_brain(None, display_mode='lzry', colorbar=True, axes=ax_p)
     display2.add_contours(pvals_img, filled='green', levels=[0.95])
+    display3 = plot_glass_brain(sig_stats_img, display_mode='lzry', colorbar=True, title=roi, plot_abs=False, vmin=-5, vmax=5, axes=ax_sp)
     plt.show(block=False)
 
 
@@ -480,11 +492,11 @@ if __name__ == '__main__':
 
     ### PART II: Statistical Analysis ###
     #-----------------------------------#
-    outp = run_stat_analysis(conns, atlases, metrics, subrois)
+    outp = run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal', 'Put', 'Caud', 'Acc'])
 
     if args.save_outputs:
         # save stats
-        fname = os.path.join(proj_dir,'postprocessing','outp_SC.pkl')
+        fname = os.path.join(proj_dir,'postprocessing','outp_SC_Thal.pkl')
         with open(fname, 'wb') as pf:
             pickle.dump(outp,pf)
 
@@ -496,4 +508,4 @@ if __name__ == '__main__':
                 if args.plot_pq_values:
                     plot_pq_values(outp, atlas, metric, roi)
                 if args.plot_stats_on_glass_brain:
-                    plot_stats_on_glass_brain(atlas, metric, roi, outp)
+                    plot_stats_on_glass_brain(atlas, metric, roi, outp, p_corrected='fwe')
