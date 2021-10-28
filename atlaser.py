@@ -18,6 +18,7 @@ import numpy as np
 import os
 import pandas as pd
 import scipy
+import sys
 
 from IPython.core.debugger import set_trace
 
@@ -74,17 +75,15 @@ class Atlaser:
         new_img = nib.Nifti1Image(new_data, self.atlas_img.affine, self.atlas_img.header)
         return new_img
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def create_brain_map(self, list_node_ids, values):
+        """ create a new niftii image with node_ids taking values
+            (nodes_ids and values must be same length) """
+        if len(list_node_ids)!=len(values):
+            print('list_node_ids and values must have the same length')
+            sys.exit()
+        new_data = np.zeros(self.atlas_data.shape)
+        for i,v in zip(list_node_ids, values):
+            inds = np.where(self.atlas_data==i)
+            new_data[inds] = v
+        new_img = nib.Nifti1Image(new_data, self.atlas_img.affine, self.atlas_img.header)
+        return new_img

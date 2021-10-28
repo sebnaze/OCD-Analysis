@@ -1,3 +1,11 @@
+################################################################################
+# Structural analysis
+#
+# Author: Sebastien Naze
+# QIMR Berghofer
+# 2021
+################################################################################
+
 import argparse
 import bct
 import itertools
@@ -109,7 +117,7 @@ def create_nifti_imgs(atlas_img, stats, pvals, node_ids, s_thresh=1.8, p_thresh=
     stats_data = np.zeros((atlas_data.shape))
     pvals_data = np.ones((atlas_data.shape))
     sig_stats_data = np.zeros((atlas_data.shape))
-    
+
     # populate stats data
     sig_ids = np.where(np.abs(stats)>=s_thresh)[0]
     sig_node_ids = node_ids[sig_ids]

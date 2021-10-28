@@ -1,3 +1,11 @@
+################################################################################
+# Functional analysis
+#
+# Author: Sebastien Naze
+# QIMR Berghofer
+# 2021
+################################################################################
+
 import bct
 import h5py
 import itertools
@@ -21,14 +29,14 @@ import statsmodels
 from statsmodels.stats import multitest
 import sys
 
-sys.path.insert(0, os.path.join(code_dir))
-import qsiprep_analysis
-import ttest_ind_FWE
-
 proj_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline'
 code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+
+sys.path.insert(0, os.path.join(code_dir))
+import qsiprep_analysis
+import ttest_ind_FWE
 
 atlas_cfg_path = os.path.join(atlas_dir, 'atlas_config.json')
 with open(atlas_cfg_path) as jsf:
@@ -82,7 +90,7 @@ def get_FC_connectomes(subjs, atlases, metrics, opts={'verbose':True}):
     return conns,subjs,discarded
 
 
-def plot_min_edges_analysis(res):
+def plot_min_edges_analysis(res, atlases, metrics, subrois):
     fig = plt.figure(figsize=[18,10])
     gs = fig.add_gridspec(2,3)
     for i,atlas in enumerate(atlases):
@@ -112,6 +120,10 @@ if '__name__'=='__main__':
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
     parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
     args = parser.parse_args()
+
+    # options
+    atlases = ['schaefer100_tianS1', 'schaefer200_tianS2', 'schaefer400_tianS4']
+    metrics = ['detrend_gsr_filtered', 'detrend_filtered']
 
     conns, subjs, discarded = get_FC_connectomes(subjs, atlases, metrics)
 
@@ -150,4 +162,4 @@ if '__name__'=='__main__':
     for nme in min_edges:
         outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal','Put','Caud','Acc'], threshold=True, quantile=0.8, n_min_edges=nme, verbose=False)
         res.append(outp)
-    plot_min_edges_analysis(res)
+    plot_min_edges_analysis(res, atlases, metrics, subrois)
