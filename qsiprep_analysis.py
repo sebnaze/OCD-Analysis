@@ -229,27 +229,26 @@ def print_sig_names(roi, stats, pvals, qvals, fwe_pvals, names, alpha=0.05, verb
 
 def threshold_connectivity(c, quantile=0.5, level='subject'):
     """ Threshold matrix c at quantile value at subject or population level """
+    cc = c.copy().astype(float)
     if level=='subject':
-        cc = c.copy().astype(float)
         c_tildes = []
         for i in range(c.shape[-1]):
             c_ = np.abs(c[:,:,i].copy().astype(float))
             c_tilde = c_[c_!=0]
             c_tilde = np.quantile(c_tilde,q=quantile)
             c_ -= c_tilde
+            cc[:,:,i] -= c_tilde
             neg_inds = np.where(c_<0)
             cc[neg_inds[0], neg_inds[1],i]=0
-            c_tildes.append(c_tilde)
-        c_tilde = np.mean(c_tildes)
+            c_tildes = np.append(c_tildes, c_tilde)
+        c_tilde = c_tildes
     else:
         # threshold at population level
-        c_ = np.abs(c.copy().astype(float))
-        c_tilde = c_[c_!=0]
+        c_tilde = cc[cc!=0]
         c_tilde = np.quantile(c_tilde,q=quantile)
-        c_ -= c_tilde
-        cc = c.copy().astype(float)
-        cc[c_<0]=0
-    return cc, c_tilde,
+        cc -= c_tilde
+        cc[cc<0]=0
+    return cc, c_tilde
 
 # Plot histograms of weight distributions
 def plot_conns_hists(conns, atlases, metrics, scale='log'):
