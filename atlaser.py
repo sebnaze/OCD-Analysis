@@ -77,7 +77,7 @@ class Atlaser:
 
     def create_brain_map(self, list_node_ids, values):
         """ create a new niftii image with node_ids taking values
-            (nodes_ids and values must be same length) """
+            (nodes_ids and values must have same length) """
         if len(list_node_ids)!=len(values):
             print('list_node_ids and values must have the same length')
             sys.exit()
