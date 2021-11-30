@@ -21,7 +21,7 @@ lukeH_proj_dir = working_path+'lukeH/projects/OCDbaseline/'
 sebN_proj_dir = working_path+'sebastiN/projects/OCDbaseline/'
 lukeH_deriv_dir = lukeH_proj_dir+'data/derivatives/post-fmriprep-fix/'
 sebN_deriv_dir = sebN_proj_dir+'data/derivatives/post-fmriprep-fix/'
-parc_dir = working_path+'shared/parcellations/qsirecon_atlases_with_subcortex/'
+parc_dir = sebN_proj_dir+'utils/'
 #scratch_dir = proj_dir+'data/scratch/nilearn/'
 
 # task
@@ -35,17 +35,19 @@ denoise_label = {
     'rest': ['detrend_filtered_scrub', 'detrend_gsr_filtered_scrub']}
 
 # parcellation nifti files used in timeseries extraction
-ts_parc_dict = {'Schaefer100_TianS1': parc_dir+'schaefer100_tianS1MNI_lps_mni.nii.gz',
-                'Schaefer200_TianS2': parc_dir+'schaefer200_tianS2MNI_lps_mni.nii.gz',
-                'Schaefer400_TianS4': parc_dir+'schaefer400_tianS4MNI_lps_mni.nii.gz'
-                }
+ts_parc_dict = {'schaefer100': parc_dir+'schaefer100MNI_lps_mni.nii.gz',
+                'schaefer200': parc_dir+'schaefer200MNI_lps_mni.nii.gz',
+                'schaefer400': parc_dir+'schaefer400MNI_lps_mni.nii.gz',
+                'harrison2009': parc_dir+'Harrison2009.nii.gz'
+               }
 
 # lists of parcellations to create fc matrices from
 # these will match the above dict in name
 #con_cortical_parcs = ['Schaefer2018_100_7', 'Schaefer2018_200_7',
 #                      'Schaefer2018_300_7', 'Schaefer2018_400_7']
 #con_subcortical_parcs = ['Tian_S1', 'Tian_S2', 'Tian_S3', 'Tian_S4']
-parcs = ['Schaefer100_TianS1', 'Schaefer200_TianS2', 'Schaefer400_TianS4']
+ctx_parc = ['schaefer100', 'schaefer200', 'schaefer400']
+subctx_parc = ['harrison2009']
 
 def extract_timeseries(subj):
     # Extracts atlas based timeseries using nilearn
@@ -74,24 +76,36 @@ def generate_fc(subj):
     # generate the tian-schaefer connectivity matrices
     for task in task_list:
         for denoise in denoise_label[task]:
-            for parc in parcs:
+            for parc in ctx_parc:
 
                 # load the cortical timeseries
                 in_file = (sebN_deriv_dir+subj+'/timeseries/'+subj+'_task-'
                            + task+'_atlas-'+parc+'_desc-'+denoise+'.h5')
                 hf = h5py.File(in_file, 'r')
-                time_series = hf[parc][:]
+                ctx_time_series = hf[parc][:]
                 hf.close()
 
-                # perform fc (here, correlation only)
-                fc = np.corrcoef(time_series.T)
+                for sparc in subctx_parc:
+                    # load the sub-cortical timeseries
+                    in_file = (sebN_deriv_dir+subj+'/timeseries/'+subj+'_task-'
+                               + task+'_atlas-'+sparc+'_desc-'+denoise+'.h5')
+                    hf = h5py.File(in_file, 'r')
+                    subctx_time_series = hf[sparc][:]
+                    hf.close()
 
-                # save out
-                out_file = (sebN_deriv_dir+subj+'/fc/'+subj+'_task-'+task
-                            + '_atlas-'+parc+'_desc-correlation-'+denoise+'.h5')
-                hf = h5py.File(out_file, 'w')
-                hf.create_dataset(name='fc', data=fc)
-                hf.close()
+                    # combine ctx and subctx timeseries
+                    time_series = np.hstack((ctx_time_series, subctx_time_series))
+                    
+                    # perform fc (here, correlation only)
+                    fc = np.corrcoef(time_series.T)
+
+                    # save out
+                    parc_out = '_'.join([parc,sparc])
+                    out_file = (sebN_deriv_dir+subj+'/fc/'+subj+'_task-'+task
+                                + '_atlas-'+parc_out+'_desc-correlation-'+denoise+'.h5')
+                    hf = h5py.File(out_file, 'w')
+                    hf.create_dataset(name='fc', data=fc)
+                    hf.close()
 
 def process_subj(subj):
     for newdir in ['timeseries', 'fc']:
@@ -106,6 +120,6 @@ def process_subj(subj):
 
 if __name__ == "__main__":
     # loop through everyone and run:
-    subj_list = list(np.loadtxt('../subject_list.txt', dtype='str'))
+    subj_list = list(np.loadtxt('./subject_list.txt', dtype='str'))
     Parallel(n_jobs=20)(delayed(process_subj)(subj) for subj in subj_list)
         

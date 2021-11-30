@@ -1,7 +1,7 @@
 #
 # Mask Atlas
 #
-# Filter existing parcellation based on ROI names and location (optional) 
+# Filter existing parcellation based on ROI names and location (optional)
 #
 # Author: Sebastien Naze
 # -----------------------------------------------------------------------
@@ -16,16 +16,18 @@ from nilearn import image
 import numpy as np
 import os
 import pandas as pd
-import scipy 
+import scipy
 
 # default global variable
-atlas_name = 'schaefer100_tianS1'
-new_atlas_name = 'p.03_ttest_' + atlas_name
-atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+atlas_name = 'schaefer400_harrison2009'
+atlas_suffix = '.nii.gz' #'MNI_lps_mni.nii.gz'
+new_atlas_name = 'FrStrPalThal_' + atlas_name
 proj_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline/'
-out_dir = os.path.join(proj_dir, 'postprocessing')
+#atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+atlas_dir = os.path.join(proj_dir, 'utils')
+out_dir = os.path.join(proj_dir, 'utils')
 atlas_cfg = pd.read_json(os.path.join(atlas_dir, 'atlas_config.json'))
-atlas_img = image.load_img(os.path.join(atlas_dir, atlas_name+'MNI_lps_mni.nii.gz'))
+atlas_img = image.load_img(os.path.join(atlas_dir, atlas_name+atlas_suffix))
 
 atlas_data = atlas_img.get_fdata()
 
@@ -49,12 +51,15 @@ def get_roi_atlas_indices(data, roi='Thal'):
 
 def get_roi_names(roi_node_ids):
     """ Get ROI names from their node indices """
-    cfg_ids = [np.where(atlas_cfg[atlas_name]['node_ids']==idx)[0][0] for idx in roi_node_ids] 
+    cfg_ids = [np.where(atlas_cfg[atlas_name]['node_ids']==idx)[0][0] for idx in roi_node_ids]
     names = [atlas_cfg[atlas_name]['node_names'][i] for i in cfg_ids]
     return names
 
-ctx = ['Left_SalVentAttnA_FrMed_1', 'Right_SalVentAttnB_PFCl_1', 'Right_ContB_PFClv_1']
-subctx = ['KJjhfewbfkf'] # whatever hash code to discard
+# filter Frontal and sub-cortical ROIs
+ctx = ['PFC', 'OFC', 'Fr', 'FEF', 'ACC', 'Cing', 'PrC', 'ParMed']
+subctx = ['Acc', 'Put', 'Caud']
+#ctx = ['Left_SalVentAttnA_FrMed_1', 'Right_SalVentAttnB_PFCl_1', 'Right_ContB_PFClv_1']
+#subctx = ['KJjhfewbfkf'] # whatever hash code to discard
 ctx_node_ids = get_rois_node_indices(ctx) #np.concatenate([get_roi_node_indices(roi=reg) for reg in ctx])
 subctx_node_ids = get_rois_node_indices(subctx) #np.concatenate([get_roi_node_indices(roi=reg) for reg in subctx])
 
@@ -65,13 +70,13 @@ fspt_atlas_data[~np.any([atlas_data==roi for roi in np.concatenate([ctx_node_ids
 def save_new_atlas(new_atlas_data):
     """ Save a new atlas """
     new_atlas_img = nib.Nifti1Image(new_atlas_data, atlas_img.affine, atlas_img.header)
-    fname = new_atlas_name + '_MNI_lps_mni.nii.gz'
+    fname = new_atlas_name + atlas_suffix
     nib.save(new_atlas_img, os.path.join(out_dir, fname))
     print('New atlas {} saved in {}'.format(fname, out_dir))
     return fname
 
 
-# save new atlas 
+# save new atlas
 new_atlas_fname = save_new_atlas(fspt_atlas_data)
 
 # transform indices in MNI coordinates
@@ -90,10 +95,10 @@ def get_coords(data, ids):
     return np.array(coords)
 
 # get thalamic coordinates
-thal_atlas_ids = get_roi_atlas_indices(atlas_data, roi='Thal')
-coords = get_coords(atlas_data, thal_atlas_ids)
+#thal_atlas_ids = get_roi_atlas_indices(atlas_data, roi='Thal')
+#coords = get_coords(atlas_data, thal_atlas_ids)
 
-most_posterior_coord = -20 #coords[:,1].min()
+most_posterior_coord = -30 #coords[:,1].min()
 
 def filter_posterior_regions(orig_atlas_data, new_atlas_data, most_posterior_coord, in_node_ids, except_node_ids=[]):
     print('Filter any region which is posterior to {}mm'.format(most_posterior_coord))
@@ -108,7 +113,7 @@ def filter_posterior_regions(orig_atlas_data, new_atlas_data, most_posterior_coo
     too_post_ids = new_atlas_ids[ [i for i,y in enumerate(new_atlas_coords[:,1]) if (y < most_posterior_coord)] ]
     too_post_ids = tuple(map(tuple,too_post_ids))
 
-    # get ROI's indices and names that are too posterior 
+    # get ROI's indices and names that are too posterior
     roi_ids = []
     for t in too_post_ids:
         roi_ids.append(orig_atlas_data[t])
@@ -117,8 +122,8 @@ def filter_posterior_regions(orig_atlas_data, new_atlas_data, most_posterior_coo
     # remove these ROIs from new atlas
     newer_atlas_data = new_atlas_data.copy()
     newer_atlas_data[np.any([orig_atlas_data==roi for roi in roi_ids if roi not in except_node_ids], axis=0)] = 0
-    
-    # remove these ROIs node ids 
+
+    # remove these ROIs node ids
     def remove_roi_node_ids_from_other_node_ids_list(other_node_ids, roi_ids):
         """ remove these ROIs node ids """
         discard = []
@@ -141,11 +146,7 @@ new_atlas_fname = save_new_atlas(new_atlas_data)
 
 
 # and save new atlas config
-new_atlas_cfg = { new_atlas_name : {'file':new_atlas_fname, 'node_names':new_node_names, 'node_ids':list(np.array(new_node_ids).astype(str))} }
+new_atlas_cfg = { atlas_name : {'file':new_atlas_fname, 'node_names':new_node_names, 'node_ids':list(np.array(new_node_ids).astype(str))} }
 json_fname = 'atlas_cfg_'+new_atlas_name+'.json'
 with open(os.path.join(out_dir,json_fname), 'w') as jf:
     json.dump(new_atlas_cfg, jf, indent=2)
-
-
-
-
