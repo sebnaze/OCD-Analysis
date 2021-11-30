@@ -35,16 +35,22 @@ code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 subjs = pd.read_table(os.path.join(code_dir, 'subject_list.txt'), names=['name'])['name']
 
-atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+#atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+atlas_dir = os.path.join(proj_dir, 'utils')
 atlas_cfg_path = os.path.join(atlas_dir, 'atlas_config.json')
 with open(atlas_cfg_path) as jsf:
     atlas_cfg = json.load(jsf)
 
+atlas_suffix = {'schaefer100_tianS1':'MNI_lps_mni.nii.gz', \
+                'schaefer200_tianS2':'MNI_lps_mni.nii.gz', \
+                'schaefer400_tianS4':'MNI_lps_mni.nii.gz', \
+                'schaefer400_harrison2009':'.nii.gz'}
+
 ### PART I : Extract connectomes ###
 #----------------------------------#
 
-def get_connectomes(subjs, atlases, metrics, opts={'rfe':'dhollander','verbose':True}):
-    """ Get connectomes from controls and patients
+def get_connectomes_from_mat(subjs, atlases, metrics, opts={'rfe':'dhollander','verbose':True}):
+    """ Get connectomes from controls and patients from .mat file in derivative folder
     inputs:
         subjs: list of subjects
         atlas: list of  atlases
@@ -90,22 +96,36 @@ def get_connectomes(subjs, atlases, metrics, opts={'rfe':'dhollander','verbose':
 
 
 # Reconstruct nosift because QSIPrep did only SIFT
-def update_no_sift(subjs, atlases, metrics=['count_no_sift'], opts={'rfe':'dhollander','verbose':True}):
+def get_connectomes_from_csv(subjs, atlases, metrics, opts={'rfe':'dhollander','verbose':True}):
+    """ Get connectomes from controls and patients from CSV file (in postprocessing folder)
+    inputs:
+        subjs: list of subjects
+        atlas: list of  atlases
+        metrics: list of metrics used in tck2connectome
+        opts: dict of extras
+    outputs:
+        connectivity matrices: dict. with keys 'controls' and 'patients'
+    """
     cohorts = ['controls', 'patients']
-    conn_no_sift = dict( ((at,met,coh),[]) for at,met,coh in itertools.product(atlases,metrics,cohorts))
+    conns = dict( ((at,met,coh),[]) for at,met,coh in itertools.product(atlases,metrics,cohorts))
     for subj,atlas,metric in itertools.product(subjs,atlases,metrics):
         csv_name = '_'.join([subj,atlas,metric,'connectome.csv'])
-        ns = pd.read_csv(os.path.join(proj_dir,'postprocessing',subj,csv_name), sep=' ', header=None, index_col=False)
+        fpath = os.path.join(proj_dir,'postprocessing',subj,csv_name)
+        if os.path.exists(fpath):
+            ns = pd.read_csv(fpath, sep=' ', header=None, index_col=False)
+        else:
+            print('Subject {} preprocessing not found.'.format([subj]))
+            continue;
         if 'control' in subj:
-            conn_no_sift[(atlas,metric,'controls')].append(np.array(ns))
+            conns[(atlas,metric,'controls')].append(np.array(ns))
         elif 'patient' in subj:
-            conn_no_sift[(atlas,metric,'patients')].append(np.array(ns))
+            conns[(atlas,metric,'patients')].append(np.array(ns))
 
-    for k,v in conn_no_sift.items():
-        conn_no_sift[k] = np.transpose(np.array(v),(1,2,0))
+    for k,v in conns.items():
+        conns[k] = np.transpose(np.array(v),(1,2,0))
         if opts['verbose']:
-            print(' --> shape: '.join([str(k), str(conn_no_sift[k].shape)]))
-    return conn_no_sift
+            print(' --> shape: '.join([str(k), str(conns[k].shape)]))
+    return conns
 
 
 
@@ -428,7 +448,7 @@ def run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal', 
 def plot_stats_on_glass_brain(atlas, metric, roi, outp, p_corrected=None):
     """ Display color-coded T stats and p-values on glass brain """
     # get atlas and ids
-    atlas_img = load_img(os.path.join(atlas_dir, atlas+'MNI_lps_mni.nii.gz'))
+    atlas_img = load_img(os.path.join(atlas_dir, atlas+atlas_suffix[atlas]))
     # create nifti imgs
     if (p_corrected==None):
         stats_img, pvals_img, sig_stats_img = create_nifti_imgs(atlas_img, stats=outp[atlas,metric,roi]['stats'], pvals=outp[atlas,metric,roi]['pvals'], node_ids=outp[atlas,metric,roi]['nn_Fr_node_ids'], p_thresh=1.)
@@ -454,33 +474,44 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
     parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
-    parser.add_argument('--compute_conns', default=False, action='store_true', help='save outputs')
+    parser.add_argument('--compute_conns', default=False, action='store_true', help='compute connectivity matrices (from .mat for sift and .csv from no_sift)')
+    parser.add_argument('--compute_conns_from_csv', default=False, action='store_true', help='compute connectivity matrices (from .csv for both sift and no_sift)')
     parser.add_argument('--plot_conns', default=False, action='store_true', help='plot connectivity matrices')
     parser.add_argument('--plot_weight_distrib', default=False, action='store_true', help='plot connectivity weight distributions')
     parser.add_argument('--plot_pq_values', default=False, action='store_true', help='plot graphs of p-values and FDR corrected p-values, with most significant weight distrib')
     parser.add_argument('--plot_stats_on_glass_brain', default=False, action='store_true', help='plot t-values and signicant p-values (uncorrected) on glass brain')
     args = parser.parse_args()
 
-    atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
+    #atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
+    atlases = ['schaefer400_harrison2009']
     metrics = ['count_sift', 'count_nosift']
-    subrois = ['Acc', 'Caud', 'Put']
+    subrois = ['Acc', 'dCaud', 'vPut']
     #subrois = ['Left_NucleusAcc', 'Left_Caud', 'Left_Put', 'Right_NucleusAcc', 'Right_Caud', 'Right_Put']
 
     ### PART I: Aggregate connectomes from controls and patients ###
     #--------------------------------------------------------------#
     if args.compute_conns:
         # import connectivity matrices from all controls and patients
-        conns, subjs, discarded = get_connectomes(subjs, atlases, metrics)
+        conns, subjs, discarded = get_connectomes_from_mat(subjs, atlases, metrics)
 
         # udpdate nosift connectomes (as qsiprep only did w/ sift)
-        conn_ns = update_no_sift(subjs, atlases)
+        conn_ns = get_connectomes_from_csv(subjs, atlases, metrics=['count_nosift'])
         cohorts = ['controls', 'patients']
         for atlas,cohort in itertools.product(atlases,cohorts):
-            conns[(atlas,'count_nosift',cohort)] = conn_ns[(atlas,'count_no_sift',cohort)]
+            conns[(atlas,'count_nosift',cohort)] = conn_ns[(atlas,'count_nosift',cohort)]
 
         if args.save_outputs:
             # save connectivity matrices
             fname = os.path.join(proj_dir,'postprocessing','conns_SC.pkl')
+            with open(fname, 'wb') as pf:
+                pickle.dump(conns,pf)
+
+    elif args.compute_conns_from_csv:
+        conns = get_connectomes_from_csv(subjs, atlases, metrics)
+
+        if args.save_outputs:
+            # save connectivity matrices
+            fname = os.path.join(proj_dir,'postprocessing','conns_SC_harrison2009.pkl')
             with open(fname, 'wb') as pf:
                 pickle.dump(conns,pf)
 
@@ -499,11 +530,11 @@ if __name__ == '__main__':
 
     ### PART II: Statistical Analysis ###
     #-----------------------------------#
-    outp = run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal', 'Put', 'Caud', 'Acc'])
+    outp = run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Put', 'Caud', 'Acc']) #suprois=['Thal', 'Pal', 'Put', 'Caud', 'Acc']
 
     if args.save_outputs:
         # save stats
-        fname = os.path.join(proj_dir,'postprocessing','outp_SC_Thal.pkl')
+        fname = os.path.join(proj_dir,'postprocessing','outp_SC_harrison2009.pkl')
         with open(fname, 'wb') as pf:
             pickle.dump(outp,pf)
 
