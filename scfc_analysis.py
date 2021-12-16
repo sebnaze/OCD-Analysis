@@ -55,6 +55,10 @@ excl_rois = { 'fspt':[], \
               'StrTh':['PFC', 'OFC', 'Fr', 'FEF', 'ACC', 'Cing', 'PrC', 'ParMed'] }
 
 
+# plotting utils
+plt_utl = {'controls':'blue',
+           'patients':'orange'}
+
 def inv_normal(x):
     """ rank-based inverse gaussian transformation """
     rank = scipy.stats.rankdata(x)
@@ -73,27 +77,76 @@ def mutual_info(x, y, bins=32, base=None):
     mi = Hx + Hy - Hxy
     return mi
 
-def compute_corr_mi(scs, fcs):
+def compute_corr_mi(scs, fcs, zscore=False, keep_non_significant=True):
     """ compute correlation and mutual information between m x m x n structural (scs) and functional (fcs) matrices"""
     nz_inds = scs.nonzero()
     new_scs = inv_normal(scs[nz_inds])
     scs[nz_inds] = new_scs
-    rs = {'r':np.array([]), 'mi':np.array([])}
+    rs = {'r':np.array([]), 'p':np.array([]), 'mi':np.array([]), 'scs':np.array([]), 'fcs':np.array([]), 'n':0}
     for s in range(fcs.shape[-1]):
-        r,_ = scipy.stats.pearsonr(scs[:,:,s].flatten(), fcs[:,:,s].flatten())
+        sc = scs[:,:,s].flatten()
+        fc = fcs[:,:,s].flatten()
+        if zscore:
+            sc = scipy.stats.zscore(sc)
+            fc = scipy.stats.zscore(fc)
+        r,p = scipy.stats.pearsonr(sc, fc)
         rs['r'] = np.append(rs['r'], r)
-        mi = mutual_info(scs[:,:,s].flatten(), fcs[:,:,s].flatten(), base=10)
+        rs['p'] = np.append(rs['p'], p)
+        if keep_non_significant:
+            rs['scs'] = np.append(rs['scs'], sc)
+            rs['fcs'] = np.append(rs['fcs'], fc)
+            rs['n'] += 1
+        else:
+            if p<=0.05:
+                rs['scs'] = np.append(rs['scs'], sc)
+                rs['fcs'] = np.append(rs['fcs'], fc)
+                rs['n'] += 1
+        mi = mutual_info(sc, fc, base=10)
         rs['mi'] = np.append(rs['mi'], mi)
     return rs
 
-def scfc_corr(excluded_rois=[]):
-    """ Compute structure-function relation using pearson correlation and mutual information """
+def scfc_corr(subnet, atlases, sc_metrics, fc_metrics, conns_sc, conns_fc, cohorts=['controls', 'patients'], \
+              row_rois=None, col_rois=None, sc_threshold=None, zscore=False, keep_non_significant=True):
+    """ Compute structure-function relation using pearson correlation and mutual information.
+        (roi input is a list of ROI names (i.e. Acc) to perform `row-wise` analysis if needed) """
     corrs = dict( ((atlas,scm,fcm,coh),None) for atlas,scm,fcm,coh in itertools.product(atlases, sc_metrics, fc_metrics, cohorts) )
     for atlas, scm, fcm, coh in itertools.product(atlases, sc_metrics, fc_metrics, cohorts):
-        node_inds, _ = qsiprep_analysis.get_fspt_Fr_node_ids(atlas, subctx=excluded_rois) #TODO: refactor get_fspt_Fr_node_ids to more generic
-        scs = conns_sc[atlas,scm,coh][np.ix_(node_inds-1,node_inds-1)].copy()
-        fcs = conns_fc[atlas,fcm,coh][np.ix_(node_inds-1,node_inds-1)].copy()
-        rs = compute_corr_mi(scs, fcs)
+        atlazer = atlaser.Atlaser(atlas)
+
+        # sort out mask indexing
+        if (subnet != 'wholebrain'):
+            node_inds, _ = qsiprep_analysis.get_fspt_Fr_node_ids(atlas, subctx=excl_rois[subnet]) #TODO: refactor get_fspt_Fr_node_ids to more generic
+        else:
+            node_inds = atlazer.node_ids.astype(int)
+
+        # threshold SC
+        if (sc_threshold != None):
+            c, _ = qsiprep_analysis.threshold_connectivity(conns_sc[(atlas,scm,coh)][np.ix_(node_inds-1, node_inds-1)], \
+                    quantile=sc_threshold)
+        else:
+            c = conns_sc[(atlas,scm,coh)][np.ix_(node_inds-1, node_inds-1)]
+
+        # sort out ROI indexing after maksing
+        if (row_rois!=None):
+            row_rois_node_inds = atlazer.get_rois_node_indices(row_rois)
+        else:
+            row_rois_node_inds = node_inds
+        if (col_rois!=None):
+            col_rois_node_inds = atlazer.get_rois_node_indices(col_rois)
+        else:
+            col_rois_node_inds = node_inds
+
+        row_ind = np.array([i for i,n in enumerate(node_inds) if n in row_rois_node_inds])
+        col_ind = np.array([i for i,n in enumerate(node_inds) if n in col_rois_node_inds])
+        if ((row_ind.size == 0) or (col_ind.size == 0)):
+            print('ROI {} or {} not in atlas {} subnet {}, no output will be generated for this subnet'.format(
+                row_rois, col_rois, atlas, subnet))
+            break;
+
+        # get matrices and compute correlation and MI
+        scs = c[np.ix_(row_ind,col_ind)]
+        fcs = conns_fc[atlas,fcm,coh][np.ix_(row_rois_node_inds-1,col_rois_node_inds-1)].copy()
+        rs = compute_corr_mi(scs, fcs, zscore=zscore, keep_non_significant=keep_non_significant)
         corrs[atlas,scm,fcm,coh] = rs
     return corrs
 
@@ -122,7 +175,7 @@ def plot_scfc_distrib(corrs, scm='count_nosift', fcm='detrend_filtered', bins=10
         plt.ylabel('n_subjs')
     plt.show(block=False)
 
-def plot_scfc_pvals(outp_scfc, subnet, scm, fcm):
+def plot_scfc_pvals(outp_scfc, subnet, atlases, sc_metrics, fc_metrics):
     """ plot bar plots of p-values """
     plt.figure(figsize=[16,4])
     for i,atlas in enumerate(atlases):
@@ -138,11 +191,44 @@ def plot_scfc_pvals(outp_scfc, subnet, scm, fcm):
     plt.show(block=False)
 
 
+def linregr(x,y):
+    """ Perform linear regression between X and Y variables. Returns X, Y, and predicted Y.  """
+    X = np.reshape(x, [-1,1])
+    Y = np.reshape(y, [-1,1])
+    lr = sklearn.linear_model.LinearRegression()
+    lr.fit(X,Y)
+    Yp = lr.predict(X)
+    return X,Y,Yp
+
+def plot_scfc_corr(corrs, subnet, atlas, sc_metrics, fc_metrics):
+    """ Plot SC w.r.t. FC with corelation coef, p-value and linear regression """
+    n_sc = len(sc_metrics)
+    n_fc = len(fc_metrics)
+    ncols = n_sc + n_fc
+    fig = plt.figure(figsize=[16,4])
+    for i,scm in enumerate(sc_metrics):
+        for j,fcm in enumerate(fc_metrics):
+            ax = plt.subplot(1,ncols,i*n_sc+j+1)
+            stats = np.array([])
+            for coh in cohorts:
+                rs = corrs[atlas,scm,fcm,coh]
+                X, Y, Yp = linregr(rs['scs'], rs['fcs'])
+                r, p = scipy.stats.pearsonr(rs['scs'], rs['fcs'])
+                stats = np.concatenate([stats, [r,p,rs['n']]])
+                ax.plot(X, Y, '.', markersize=5, color=plt_utl[coh])
+                ax.plot(X, Yp, '-', linewidth=2, color=plt_utl[coh])
+            titl = '{} - {} \n {} - {} \n'.format(subnet, atlas, scm, fcm) \
+                 + 'r_con={:.3f}, p_con={:.3f}, n_con={}\nr_pat={:.3f}, p_pat={:.3f}, n_pat={}'.format(*stats)
+            ax.set_title(titl)
+    plt.show(block=False)
+
+
 if __name__=='__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
     parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
+    parser.add_argument('--sc_threshold', type=float, default=None, action='store', help='threshold applied to structutal connectome [0-1]')
     args = parser.parse_args()
 
     # load data
@@ -159,25 +245,34 @@ if __name__=='__main__':
             conns_fc[k] = np.delete(conn[:,:,:-1], pt28_idx, axis=-1)
 
     # extract correlation and MI for each sub-network
-    subnets = ['fspt', 'Fr', 'StrTh']
+    subnets = ['wholebrain', 'fspt', 'Fr', 'StrTh']
     subnet_corrs = dict()
     for subnet in subnets:
-        subnet_corrs[subnet] = scfc_corr(excluded_rois=excl_rois[subnet])
+        subnet_corrs[subnet] = scfc_corr(subnet, atlases, sc_metrics, fc_metrics, conns_sc, conns_fc, sc_threshold=args.sc_threshold)
 
     # save SC-FC correlations and MI
     if args.save_outputs:
         with open(os.path.join(proj_dir, 'postprocessing', 'corrs_SCFC.pkl'), 'wb') as pf:
             pickle.dump(subnet_corrs, pf)
 
+
+
     # extract stats
     outp_scfc = dict( ((subnet, atlas,scm,fcm),None) for subnet,atlas,scm,fcm in itertools.product(subnets, atlases, sc_metrics, fc_metrics) )
     p_min = [1., [None,None,None,None]] # [p, key]
+    excl_subnets = []
     for subnet,atlas,scm,fcm in itertools.product(subnets, atlases, sc_metrics, fc_metrics):
-        t,p = scipy.stats.ttest_ind(subnet_corrs[subnet][atlas,scm,fcm,'controls']['r'], subnet_corrs[subnet][atlas,scm,fcm,'patients']['r'], permutations=1000)
-        outp_scfc[subnet,atlas,scm,fcm] = {'t':t, 'p':p}
-        if (p < p_min[0]):
-            p_min = [p, [subnet,atlas,scm,fcm]]
+        if ( (subnet_corrs[subnet][atlas,scm,fcm,'controls'] != None) and (subnet_corrs[subnet][atlas,scm,fcm,'patients'] != None) ):
+            t,p = scipy.stats.ttest_ind(subnet_corrs[subnet][atlas,scm,fcm,'controls']['r'], subnet_corrs[subnet][atlas,scm,fcm,'patients']['r'], permutations=1000)
+            outp_scfc[subnet,atlas,scm,fcm] = {'t':t, 'p':p}
+            if (p < p_min[0]):
+                p_min = [p, [subnet,atlas,scm,fcm]]
+        else:
+            excl_subnets.append(subnet)
 
     # plot stats
     for subnet in subnets:
-        plot_scfc_pvals(outp_scfc, subnet, p_min[1][2], p_min[1][3])
+        if subnet not in excl_subnets:
+            plot_scfc_pvals(outp_scfc, subnet, atlases, sc_metrics, fc_metrics)#p_min[1][2], p_min[1][3])
+            for atlas in atlases:
+                plot_scfc_corr(subnet_corrs[subnet], subnet, atlas, sc_metrics, fc_metrics)
