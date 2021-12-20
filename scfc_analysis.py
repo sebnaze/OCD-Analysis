@@ -82,7 +82,8 @@ def compute_corr_mi(scs, fcs, zscore=False, keep_non_significant=True):
     nz_inds = scs.nonzero()
     new_scs = inv_normal(scs[nz_inds])
     scs[nz_inds] = new_scs
-    rs = {'r':np.array([]), 'p':np.array([]), 'mi':np.array([]), 'scs':np.array([]), 'fcs':np.array([]), 'n':0}
+    rs = {'r':np.array([]), 'p':np.array([]), 'mi':np.array([]), 'scs':np.array([]), 'fcs':np.array([]), \
+          'n':0, 'subjs_inds':np.array([], dtype=int)}
     for s in range(fcs.shape[-1]):
         sc = scs[:,:,s].flatten()
         fc = fcs[:,:,s].flatten()
@@ -96,11 +97,13 @@ def compute_corr_mi(scs, fcs, zscore=False, keep_non_significant=True):
             rs['scs'] = np.append(rs['scs'], sc)
             rs['fcs'] = np.append(rs['fcs'], fc)
             rs['n'] += 1
+            rs['subjs_inds'] = np.append(rs['subjs_inds'], int(s))
         else:
             if p<=0.05:
                 rs['scs'] = np.append(rs['scs'], sc)
                 rs['fcs'] = np.append(rs['fcs'], fc)
                 rs['n'] += 1
+                rs['subjs_inds'] = np.append(rs['subjs_inds'], int(s))
         mi = mutual_info(sc, fc, base=10)
         rs['mi'] = np.append(rs['mi'], mi)
     return rs
