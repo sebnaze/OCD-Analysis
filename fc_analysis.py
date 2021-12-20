@@ -5,7 +5,7 @@
 # QIMR Berghofer
 # 2021
 ################################################################################
-
+import argparse
 import bct
 import h5py
 import itertools
@@ -43,7 +43,7 @@ with open(atlas_cfg_path) as jsf:
         atlas_cfg = json.load(jsf)
         subjs = pd.read_table(os.path.join(code_dir, 'subject_list.txt'), names=['name'])['name']
 
-def get_FC_connectomes(subjs, atlases, metrics, opts={'verbose':True}):
+def get_FC_connectomes(subjs, atlases, metrics, opts={'smoothing_fwhm':8, 'verbose':True}):
     """ Get connectomes from controls and patients
     inputs:
         subjs: list of subjects
@@ -59,7 +59,12 @@ def get_FC_connectomes(subjs, atlases, metrics, opts={'verbose':True}):
     for i,subj in enumerate(subjs):
         subj_dir = os.path.join(deriv_dir, 'post-fmriprep-fix', subj, 'fc')
         for atlas,metric in itertools.product(atlases, metrics):
-            fname = subj+'_task-rest_atlas-'+atlas+'_desc-correlation-'+metric+'_scrub.h5'
+            if opts['verbose']:
+                print('Creating {} functional connectivity with {} {} fwhm={}'.format(
+                        subj,atlas,metric,opts['smoothing_fwhm']))
+
+            fname = subj+'_task-rest_atlas-'+atlas+'_desc-correlation-'+metric+ \
+                                '_scrub_fwhm'+str(opts['smoothing_fwhm'])+'.h5'
             fpath = os.path.join(subj_dir, fname)
             if os.path.exists(fpath):
                 with open(fpath, 'rb') as hf:
@@ -114,7 +119,7 @@ def plot_min_edges_analysis(res, atlases, metrics, subrois):
     plt.show(block=False)
 
 
-if '__name__'=='__main__':
+if __name__=='__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
@@ -139,8 +144,8 @@ if '__name__'=='__main__':
 
     subrois = ['Acc', 'Caud', 'Put']
     ## INCLUDING (VS NOT INCLUDING) THALAMUS IN suprois to treat is as non-Frontal (vs Frontal)
-    #outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, threshold=True, quantile=0.8)
-    outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal','Put','Caud','Acc'], threshold=True, quantile=0.8)
+    outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, threshold=True, quantile=0.8)
+    #outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal','Put','Caud','Acc'], threshold=True, quantile=0.8)
 
     # save stats analysis
     if args.save_outputs:
@@ -160,6 +165,6 @@ if '__name__'=='__main__':
     min_edges = np.arange(40)
     res=[]
     for nme in min_edges:
-        outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Pal','Put','Caud','Acc'], threshold=True, quantile=0.8, n_min_edges=nme, verbose=False)
+        outp = qsiprep_analysis.run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal','Put','Caud','Acc'], threshold=True, quantile=0.8, n_min_edges=nme, verbose=False)
         res.append(outp)
     plot_min_edges_analysis(res, atlases, metrics, subrois)
