@@ -22,13 +22,17 @@ import sys
 
 from IPython.core.debugger import set_trace
 
+atlas_suffix = {'schaefer100_tianS1':'MNI_lps_mni.nii.gz', \
+                'schaefer200_tianS2':'MNI_lps_mni.nii.gz', \
+                'schaefer400_tianS4':'MNI_lps_mni.nii.gz', \
+                'schaefer400_harrison2009':'.nii.gz'}
 class Atlaser:
     def __init__(self, atlas='schaefer100_tianS1'):
         """ Constructor: set default global variable for atlas """
         self.atlas_name = atlas
-        self.atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+        self.atlas_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline/utils/'
         self.atlas_cfg = pd.read_json(os.path.join(self.atlas_dir, 'atlas_config.json'))
-        self.atlas_img = load_img(os.path.join(self.atlas_dir, self.atlas_name+'MNI_lps_mni.nii.gz'))
+        self.atlas_img = load_img(os.path.join(self.atlas_dir, self.atlas_name+atlas_suffix[atlas]))
         self.atlas_data = self.atlas_img.get_fdata()
         self.node_ids = np.array(self.atlas_cfg[self.atlas_name]['node_ids'])
         self.node_names = np.array(self.atlas_cfg[self.atlas_name]['node_names'])
@@ -56,10 +60,10 @@ class Atlaser:
         names = [self.node_names[i] for i in cfg_ids]
         return names
 
-    def save_new_atlas(new_atlas_data, new_atlas_name, out_dir):
+    def save_new_atlas(new_atlas_data, new_atlas_name, out_dir, new_atlas_suffix='_MNI_lps_mni.nii.gz'):
         """ Save a new atlas """
         new_atlas_img = nib.Nifti1Image(new_atlas_data, self.atlas_img.affine, self.atlas_img.header)
-        fname = new_atlas_name + '_MNI_lps_mni.nii.gz'
+        fname = new_atlas_name + new_atlas_suffix
         nib.save(new_atlas_img, os.path.join(out_dir, fname))
         print('New atlas {} saved in {}'.format(fname, out_dir))
         return fname
