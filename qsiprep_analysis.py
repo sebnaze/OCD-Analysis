@@ -248,7 +248,8 @@ def print_sig_names(roi, stats, pvals, qvals, fwe_pvals, names, alpha=0.05, verb
     #return names[ids], pvals[idx], stats[idx]
 
 def threshold_connectivity(c, quantile=0.5, level='subject'):
-    """ Threshold matrix c at quantile value at subject or population level """
+    """ Threshold matrix c at quantile value at subject or population level.
+        The outputs connectivity matrices are ajusted to threshold value (new zero = threshold)"""
     cc = c.copy().astype(float)
     if level=='subject':
         c_tildes = []
@@ -482,10 +483,10 @@ if __name__ == '__main__':
     parser.add_argument('--plot_stats_on_glass_brain', default=False, action='store_true', help='plot t-values and signicant p-values (uncorrected) on glass brain')
     args = parser.parse_args()
 
-    #atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
-    atlases = ['schaefer400_harrison2009']
+    atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
+    #atlases = ['schaefer400_harrison2009']
     metrics = ['count_sift', 'count_nosift']
-    subrois = ['Acc', 'dCaud', 'vPut']
+    subrois = ['Acc', 'Caud', 'Put']
     #subrois = ['Left_NucleusAcc', 'Left_Caud', 'Left_Put', 'Right_NucleusAcc', 'Right_Caud', 'Right_Put']
 
     ### PART I: Aggregate connectomes from controls and patients ###
@@ -530,11 +531,11 @@ if __name__ == '__main__':
 
     ### PART II: Statistical Analysis ###
     #-----------------------------------#
-    outp = run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Put', 'Caud', 'Acc']) #suprois=['Thal', 'Pal', 'Put', 'Caud', 'Acc']
+    outp = run_stat_analysis(conns, atlases, metrics, subrois, suprois=['Thal', 'Pal', 'Put', 'Caud', 'Acc'])
 
     if args.save_outputs:
         # save stats
-        fname = os.path.join(proj_dir,'postprocessing','outp_SC_harrison2009.pkl')
+        fname = os.path.join(proj_dir,'postprocessing','outp_SC.pkl')
         with open(fname, 'wb') as pf:
             pickle.dump(outp,pf)
 
@@ -542,7 +543,7 @@ if __name__ == '__main__':
     # plot results on glass brain
     for atlas,metric,roi in itertools.product(atlases, metrics, rois):
         if outp[atlas,metric,roi] != None:
-            if np.any(outp[atlas,metric,roi]['pvals']<=0.05):
+            if np.any(outp[atlas,metric,roi]['pvals']<=0.01):
                 if args.plot_pq_values:
                     plot_pq_values(outp, atlas, metric, roi)
                 if args.plot_stats_on_glass_brain:
