@@ -69,7 +69,7 @@ def get_bold_dict(atlases, fc_metrics, subjs):
 
 def get_subnet_indices(atlas):
     """ returns dictionary of indices corresponding to each subnetwork (indices are 'atlas indices')"""
-    sub_inds = {'wholebrain':np.s_[None], \
+    sub_inds = {'wholebrain':np.arange(len(qsiprep_analysis.atlas_cfg[atlas]['node_ids'])), \
             'fspt':qsiprep_analysis.get_fspt_node_ids(atlas)-1, \
             'Fr':qsiprep_analysis.get_fspt_Fr_node_ids(atlas)[0]-1, \
             'StrTh':qsiprep_analysis.get_fspt_Fr_node_ids(atlas, \
@@ -119,6 +119,7 @@ if __name__=='__main__':
     parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
     parser.add_argument('--lap_type', default='normalized', help="Laplacian type, 'normalized' (default) or 'combinatorial'")
     parser.add_argument('--plot_conns', default=False, action='store_true', help='plot connectivity matrices')
+    parser.add_argument('--plot_eigenvectors', default=False, action='store_true', help='plot eigenvectors on glass brain (takes a lot of time!)')
     args = parser.parse_args()
 
     # load data
@@ -143,7 +144,7 @@ if __name__=='__main__':
     sc_metrics = ['count_nosift']
     fc_metrics = ['detrend_filtered']
     cohorts = ['controls', 'patients']
-    subnets = ['fspt', 'Fr', 'StrTh']
+    subnets = ['wholebrain', 'fspt', 'Fr', 'StrTh']
 
     # new data structures
     sc_t = dict()   # thresholded and weight adjusted SC
@@ -216,6 +217,6 @@ if __name__=='__main__':
                 p_corrected[m, gfreqs[i]] = r[1]
         outp_gsp[subnet,atlas,scm,fcm] = {'t_low':t_low, 'p_low':p_low, 't_high':t_high, 'p_high':p_high, 'p_corrected':p_corrected}
 
-        for gfreq in gfreqs:
-            print_significant_stats(subnet,atlas,scm,fcm,outp_gsp,gfreq)
-            plot_stats_on_glass_brain(subnet,atlas,scm,fcm,outp_gsp,gfreq)
+        #for gfreq in gfreqs:
+            #print_significant_stats(subnet,atlas,scm,fcm,outp_gsp,gfreq)
+            #plot_stats_on_glass_brain(subnet,atlas,scm,fcm,outp_gsp,gfreq)
