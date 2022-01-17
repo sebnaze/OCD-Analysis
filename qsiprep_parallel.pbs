@@ -45,8 +45,8 @@ module load python/3.6.1
 #source ~/.proxy
 
 # analysis pipeline recon file
-recon_file=/mnt/lustre/working/lab_lucac/sebastiN/projects/OCDbaseline/docs/code/preprocessing/qsiprep_recon_file_1M_seeds.json
-
+#recon_file=/mnt/lustre/working/lab_lucac/sebastiN/projects/OCDbaseline/docs/code/preprocessing/qsiprep_recon_file_1M_seeds.json
+recon_file=dsi_studio_gqi
 # run qsiprep
 # - these commands are no longer in qsiprep
 #--force-spatial-normalization \
@@ -65,6 +65,8 @@ qsiprep-singularity ${bids_dir} ${out_dir} participant -i ${qsip_con} \
 --hmc-model eddy \
 --fs-license-file /software/freesurfer/freesurfer-6.0.1/license.txt \
 --custom_atlases ${atlas_dir} \
+--recon-only \
+--recon-input ${out_dir}qsiprep/ \
 --recon-spec ${recon_file} \
 --mem-mb 48000 \
 --nthreads 32 \
