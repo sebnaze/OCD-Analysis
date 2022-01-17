@@ -25,7 +25,8 @@ from IPython.core.debugger import set_trace
 atlas_suffix = {'schaefer100_tianS1':'MNI_lps_mni.nii.gz', \
                 'schaefer200_tianS2':'MNI_lps_mni.nii.gz', \
                 'schaefer400_tianS4':'MNI_lps_mni.nii.gz', \
-                'schaefer400_harrison2009':'.nii.gz'}
+                'schaefer400_harrison2009':'.nii.gz',
+                'ocdOFClPFC_ocdAccdPut':'.nii.gz'}
 class Atlaser:
     def __init__(self, atlas='schaefer100_tianS1'):
         """ Constructor: set default global variable for atlas """

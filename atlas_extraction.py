@@ -39,17 +39,21 @@ denoise_label = {
     'rest': ['detrend_filtered_scrub', 'detrend_gsr_filtered_scrub']}
 
 # parcellation nifti files used in timeseries extraction
-ts_parc_dict = {'schaefer100': parc_dir+'schaefer100MNI_lps_mni.nii.gz',
-                'schaefer200': parc_dir+'schaefer200MNI_lps_mni.nii.gz',
-                'schaefer400': parc_dir+'schaefer400MNI_lps_mni.nii.gz',
-                'harrison2009': parc_dir+'Harrison2009.nii.gz'
+ts_parc_dict = {#'schaefer100': parc_dir+'schaefer100MNI_lps_mni.nii.gz',
+                #'schaefer200': parc_dir+'schaefer200MNI_lps_mni.nii.gz',
+                #'schaefer400': parc_dir+'schaefer400MNI_lps_mni.nii.gz',
+                #'harrison2009': parc_dir+'Harrison2009.nii.gz',
+                'ocdOFClPFC': parc_dir+'ocdOFClPFC.nii.gz',
+                'ocdAccdPut': parc_dir+'ocdAccdPut.nii.gz'
                }
 
 
 smoothing_fwhm = {'schaefer100': 8,
                   'schaefer200': 8,
                   'schaefer400': 8,
-                  'harrison2009': None
+                  'harrison2009': None,
+                  'ocdOFClPFC': None,
+                  'ocdAccdPut': None
                  }
 
 # lists of parcellations to create fc matrices from
@@ -57,8 +61,13 @@ smoothing_fwhm = {'schaefer100': 8,
 #con_cortical_parcs = ['Schaefer2018_100_7', 'Schaefer2018_200_7',
 #                      'Schaefer2018_300_7', 'Schaefer2018_400_7']
 #con_subcortical_parcs = ['Tian_S1', 'Tian_S2', 'Tian_S3', 'Tian_S4']
-ctx_parc = ['schaefer100', 'schaefer200', 'schaefer400']
-subctx_parc = ['harrison2009']
+
+#ctx_parc = ['schaefer100', 'schaefer200', 'schaefer400']
+#subctx_parc = ['harrison2009']
+
+ctx_parc = ['ocdOFClPFC']
+subctx_parc = ['ocdAccdPut', 'harrison2009']
+
 
 def extract_timeseries(subj):
     # Extracts atlas based timeseries using nilearn
@@ -139,6 +148,6 @@ if __name__ == "__main__":
     if (args.subj == None):
         # loop through everyone and run:
         subj_list = list(np.loadtxt('./subject_list.txt', dtype='str'))
-        Parallel(n_jobs=20)(delayed(process_subj)(subj) for subj in subj_list)
+        Parallel(n_jobs=12)(delayed(process_subj)(subj) for subj in subj_list)
     else:
         process_subj(args.subj)

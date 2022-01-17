@@ -44,7 +44,8 @@ with open(atlas_cfg_path) as jsf:
 atlas_suffix = {'schaefer100_tianS1':'MNI_lps_mni.nii.gz', \
                 'schaefer200_tianS2':'MNI_lps_mni.nii.gz', \
                 'schaefer400_tianS4':'MNI_lps_mni.nii.gz', \
-                'schaefer400_harrison2009':'.nii.gz'}
+                'schaefer400_harrison2009':'.nii.gz', \
+                'ocdOFClPFC_ocdAccdPut':'.nii.gz'}
 
 ### PART I : Extract connectomes ###
 #----------------------------------#
@@ -481,12 +482,13 @@ if __name__ == '__main__':
     parser.add_argument('--plot_weight_distrib', default=False, action='store_true', help='plot connectivity weight distributions')
     parser.add_argument('--plot_pq_values', default=False, action='store_true', help='plot graphs of p-values and FDR corrected p-values, with most significant weight distrib')
     parser.add_argument('--plot_stats_on_glass_brain', default=False, action='store_true', help='plot t-values and signicant p-values (uncorrected) on glass brain')
+    parser.add_argument('--save_suffix', default='_SC', type=str, action='store', help='text to append ot end of connectivity files for saving')
     args = parser.parse_args()
 
-    atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
-    #atlases = ['schaefer400_harrison2009']
-    metrics = ['count_sift', 'count_nosift']
-    subrois = ['Acc', 'Caud', 'Put']
+    #atlases = ['schaefer400_tianS4', 'schaefer200_tianS2', 'schaefer100_tianS1']
+    atlases = ['ocdOFClPFC_ocdAccdPut'] #['schaefer400_harrison2009']
+    metrics = ['count_sift'] #['count_sift', 'count_nosift']
+    subrois = ['Acc', 'Put'] # 'Caud'
     #subrois = ['Left_NucleusAcc', 'Left_Caud', 'Left_Put', 'Right_NucleusAcc', 'Right_Caud', 'Right_Put']
 
     ### PART I: Aggregate connectomes from controls and patients ###
@@ -503,7 +505,7 @@ if __name__ == '__main__':
 
         if args.save_outputs:
             # save connectivity matrices
-            fname = os.path.join(proj_dir,'postprocessing','conns_SC.pkl')
+            fname = os.path.join(proj_dir,'postprocessing','conns'+args.save_suffix+'.pkl')
             with open(fname, 'wb') as pf:
                 pickle.dump(conns,pf)
 
@@ -512,12 +514,12 @@ if __name__ == '__main__':
 
         if args.save_outputs:
             # save connectivity matrices
-            fname = os.path.join(proj_dir,'postprocessing','conns_SC_harrison2009.pkl')
+            fname = os.path.join(proj_dir,'postprocessing','conns'+args.save_suffix+'.pkl')
             with open(fname, 'wb') as pf:
                 pickle.dump(conns,pf)
 
     else:
-        fname = os.path.join(proj_dir,'postprocessing','conns_SC.pkl')
+        fname = os.path.join(proj_dir,'postprocessing','conns'+args.save_suffix+'.pkl')
         with open(fname, 'rb') as pf:
             conns = pickle.load(pf)
 
@@ -535,7 +537,7 @@ if __name__ == '__main__':
 
     if args.save_outputs:
         # save stats
-        fname = os.path.join(proj_dir,'postprocessing','outp_SC.pkl')
+        fname = os.path.join(proj_dir,'postprocessing','outp'+args.save_suffix+'.pkl')
         with open(fname, 'wb') as pf:
             pickle.dump(outp,pf)
 
@@ -543,7 +545,7 @@ if __name__ == '__main__':
     # plot results on glass brain
     for atlas,metric,roi in itertools.product(atlases, metrics, rois):
         if outp[atlas,metric,roi] != None:
-            if np.any(outp[atlas,metric,roi]['pvals']<=0.01):
+            if np.any(outp[atlas,metric,roi]['pvals']<=0.05):
                 if args.plot_pq_values:
                     plot_pq_values(outp, atlas, metric, roi)
                 if args.plot_stats_on_glass_brain:
