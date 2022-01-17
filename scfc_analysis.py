@@ -90,7 +90,10 @@ def compute_corr_mi(scs, fcs, zscore=False, keep_non_significant=True):
         if zscore:
             sc = scipy.stats.zscore(sc)
             fc = scipy.stats.zscore(fc)
-        r,p = scipy.stats.pearsonr(sc, fc)
+        if (len(sc)<2 or len(fc)<2):
+            r,p = (np.NaN, np.NaN)
+        else:
+            r,p = scipy.stats.pearsonr(sc, fc)
         rs['r'] = np.append(rs['r'], r)
         rs['p'] = np.append(rs['p'], p)
         if keep_non_significant:
