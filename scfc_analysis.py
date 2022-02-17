@@ -88,6 +88,9 @@ def mutual_info(x, y, bins=32, base=None):
 
 def compute_corr_mi(scs, fcs, zscore=False, keep_non_significant=True):
     """ compute correlation and mutual information between m x m x n structural (scs) and functional (fcs) matrices"""
+    if fcs.shape[-1]!=scs.shape[-1] :
+        print('ERROR: Not the same number of subjects in conns_sc and conns_fc!')
+        return None
     nz_inds = scs.nonzero()
     new_scs = inv_normal(scs[nz_inds])
     scs[nz_inds] = new_scs
@@ -153,7 +156,7 @@ def scfc_corr(subnet, atlases, sc_metrics, fc_metrics, conns_sc, conns_fc, cohor
 
         row_ind = np.array([i for i,n in enumerate(node_inds) if n in row_rois_node_inds])
         col_ind = np.array([i for i,n in enumerate(node_inds) if n in col_rois_node_inds])
-        if ((row_ind.size == 0) or (col_ind.size == 0)):
+        if ((row_ind.size == 0) | (col_ind.size == 0)):
             print('ROI {} or {} not in atlas {} subnet {}, no output will be generated for this subnet'.format(
                 row_rois, col_rois, atlas, subnet))
             break;
@@ -261,18 +264,20 @@ if __name__=='__main__':
                             'conns_FC'+atlas_types[args.atlas_type]['file_suffix']['FC']+'.pkl'), 'rb') as fcf:
         conns_fc = pickle.load(fcf)
 
-    # remove patients 28 & 55 from FC since not in SC
+    # remove patients 28 and 55 from FC and SC (since failed)
     pt_inds, = np.where(['patient' in subj for subj in subjs])
+    con_inds, = np.where(['control' in subj for subj in subjs])
     pt28_idx, = np.where(['patient28' in subj for subj in subjs[pt_inds]])
     for k,conn in conns_fc.items():
         if k[2]=='patients':
-            conns_fc[k] = np.delete(conn[:,:,:-1], pt28_idx, axis=-1)
+            #conns_fc[k] = np.delete(conn[:,:,:-1], pt28_idx, axis=-1)  <-- pt55 not processed
+            conns_fc[k] = np.delete(conn, pt28_idx, axis=-1)
 
     # create summary dataframe
     scfc_summary_df = pd.DataFrame()
     for i,subj in enumerate(subjs):
-        if ( ('patient28' in subj) or ('patient55' in subj) ):
-            subjs.drop(i)
+        if ( ('patient28' in subj) | ('patient55' in subj) ):
+            subjs.pop(i)
     #scfc_summary_df['subj'] = subjs
 
 
@@ -291,7 +296,8 @@ if __name__=='__main__':
     for subnet,subroi,atlas,scm,fcm in itertools.product(subnets,subrois,atlases,sc_metrics,fc_metrics):
         if ((subnet_corrs[subnet,sbr][atlas,scm,fcm,'controls'] != None) and (subnet_corrs[subnet,sbr][atlas,scm,fcm,'patients'] != None)):
             sbr = '_'.join(subroi)
-            df_ = pd.DataFrame(subjs)
+            df_ = pd.DataFrame()
+            df_['subj'] = subjs.copy()
             df_['subnet'] = np.repeat(subnet, len(subjs))
             df_['subroi'] = np.repeat(sbr, len(subjs))
             df_['atlas'] = np.repeat(atlas, len(subjs))
@@ -299,15 +305,20 @@ if __name__=='__main__':
             df_['fc_metric'] = np.repeat(fcm, len(subjs))
             df_['sc'] = np.repeat(np.NaN, len(subjs))
             df_['fc'] = np.repeat(np.NaN, len(subjs))
-            inds = np.concatenate([subnet_corrs[subnet,sbr][atlas,scm,fcm,coh]['subjs_inds'] for coh in cohorts])
+            inds = np.concatenate([subnet_corrs[subnet,sbr][atlas,scm,fcm,'controls']['subjs_inds'],
+                                   subnet_corrs[subnet,sbr][atlas,scm,fcm,'patients']['subjs_inds']+len(con_inds)])
             df_['sc'].iloc[inds] = np.concatenate([subnet_corrs[subnet,sbr][atlas,scm,fcm,coh]['scs'] for coh in cohorts])
             df_['fc'].iloc[inds] = np.concatenate([subnet_corrs[subnet,sbr][atlas,scm,fcm,coh]['fcs'] for coh in cohorts])
+            df_['r'] = np.concatenate([subnet_corrs[subnet,sbr][atlas,scm,fcm,coh]['r'] for coh in cohorts])
+            df_['cohort'] = np.concatenate([np.repeat('controls', len(con_inds)), np.repeat('patients', len(pt_inds)-2)]) #<-- removed pt28 and 55
             scfc_summary_df = scfc_summary_df.append(df_, ignore_index=True)
 
     # save SC-FC correlations and MI
     if args.save_outputs:
         with open(os.path.join(proj_dir, 'postprocessing', 'corrs_SCFC'+args.output_suffix+'.pkl'), 'wb') as pf:
             pickle.dump(subnet_corrs, pf)
+        with open(os.path.join(proj_dir, 'postprocessing', 'scfc_summary_df'+args.output_suffix+'.pkl'), 'wb') as pf:
+            pickle.dump(scfc_summary_df, pf)
 
 
     # extract stats
