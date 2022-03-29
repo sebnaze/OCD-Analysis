@@ -20,17 +20,28 @@ import numpy as np
 import os
 import pickle
 import pandas as pd
+import platform
 import scipy
 from scipy.io import loadmat
 import statsmodels
 from statsmodels.stats import multitest
 import ttest_ind_FWE
 
+# get computer name to set paths
+if platform.node()=='qimr18844':
+    working_dir = '/home/sebastin/working/'
+elif 'hpcnode' in platform.node():
+    working_dir = '/mnt/lustre/working/'
+else:
+    print('Computer unknown! Setting working dir as /working')
+    working_dir = '/working/'
+
+
 ### Global variables ###
 #----------------------#
 
 # paths
-proj_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline'
+proj_dir = working_dir+'lab_lucac/sebastiN/projects/OCDbaseline'
 code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 subjs = pd.read_table(os.path.join(code_dir, 'subject_list.txt'), names=['name'])['name']
