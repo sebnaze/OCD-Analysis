@@ -16,7 +16,6 @@ import nibabel as nib
 import nilearn
 from nilearn.image import load_img, binarize_img, threshold_img, mean_img, new_img_like
 from nilearn.plotting import plot_matrix, plot_glass_brain, plot_stat_map, plot_img_comparison, plot_roi, view_img
-from nilearn.input_data import NiftiMasker, NiftiLabelsMasker, NiftiSpheresMasker
 import numpy as np
 import os
 import pickle
@@ -51,8 +50,10 @@ rois = ['ACC_OFC_ROI', 'PUT_PFC_ROI']
 dsi_metrics = ['gfa'] #, 'iso', 'fa0', 'fa1', 'fa2']
 subroi = '3-2' #'3-1'#'3-2'  # 3-1=contralateral, 3-2=ipsilateral, 3-3=cortico-cortical
 #thresholds = [s+'%' for s in np.arange(0,100,20).astype(str)]
-thresholds = np.arange(0,101,10) # in %
 cohorts = ['controls', 'patients']
+
+# coords for plotting global masks
+xyz = {'ACC_OFC_ROI':(20, 42, -4), 'PUT_PFC_ROI':None}
 
 
 def get_tdi_img(subj, scm, roi):
@@ -79,18 +80,8 @@ def get_diffusion_metric(subj, metric='gfa'):
         img = None
     return img
 
-
-if __name__=='__main__':
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--plot_indiv_masks', default=False, action='store_true', help='flag to plot individual masks')
-    parser.add_argument('--keep_masks', default=False, action='store_true', help='flag to keep subjects in dict (take ~16Gb)')
-    parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
-    parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
-    parser.add_argument('--plot_figs', default=False, action='store_true', help='plot figures')
-    args = parser.parse_args()
-
-    # main
+def compute_tdi_maps(thresholds, args):
+    """ computes track density maps between pathways ROIs """
     dsi_m = dict( ( ((dsm,scm,roi,thr,coh),{'mean_dsi':[], 'masks':[]}) for dsm,scm,roi,thr,coh in itertools.product(
         dsi_metrics, sc_metrics, rois, thresholds, cohorts)) )
     for dsm,scm,roi,thr in itertools.product(dsi_metrics, sc_metrics, rois, thresholds):
@@ -129,17 +120,24 @@ if __name__=='__main__':
                 if args.keep_masks:
                     dsi_m[dsm,scm,roi,thr, 'patients']['masks'].append(mask)
 
+    if args.save_outputs:
+        with open(os.path.join(proj_dir, 'postprocessing', 'dsi_m.pkl'), 'wb') as f:
+            pickle.dump(dsi_m, f)
+    return dsi_m
 
-    # stats
-    stats = dict()
-    for dsm,scm,roi,thr in itertools.product(dsi_metrics, sc_metrics, rois, thresholds):
-        t,p = scipy.stats.ttest_ind(np.array(dsi_m[dsm,scm,roi,thr, 'controls']['mean_dsi']), np.array(dsi_m[dsm,scm,roi,thr, 'patients']['mean_dsi']))
-        print("{} {} {} {} - t={:.3f} p={:.3f}".format(dsm,scm,roi,thr,t,p))
-        stats[dsm,scm,roi,thr] = {'t':t, 'p':p}
-    with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_stats_dict.pkl'), 'wb') as f:
-        pickle.dump(stats, f)
+def create_df_dsi(dsi_m, thr, scm='sift', dsm='gfa'):
+    """ create dataframe from dict with DSI metrics """
+    df_dsi = pd.DataFrame(columns=['mean_dsi', 'cohorts', 'roi'])
+    for roi, coh in itertools.product(rois, cohorts):
+        n = len(dsi_m[dsm,scm,roi,thr,coh]['mean_dsi'])
+        df_ = pd.DataFrame.from_dict({'mean_dsi':dsi_m[dsm,scm,roi,thr,coh]['mean_dsi'],
+                                      'cohorts':np.repeat(coh,n),
+                                      'roi':np.repeat(roi,n)})
+        df_dsi = df_dsi.append(df_, ignore_index=True)
+    return df_dsi
 
-    # summary df
+def create_summary():
+    """ Summarize TDI outputs in dataframe """
     summary_df = pd.DataFrame()
     for dsm,scm,roi,thr in itertools.product(dsi_metrics, sc_metrics, rois, thresholds):
         df = pd.DataFrame()
@@ -153,8 +151,147 @@ if __name__=='__main__':
 
         summary_df = summary_df.append(df, ignore_index=True)
 
-    with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_summary_df.pkl'), 'wb') as f:
-        pickle.dump(summary_df, f)
+    if args.save_outputs:
+        with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_summary_df.pkl'), 'wb') as f:
+            pickle.dump(summary_df, f)
 
 
-    # relation to Y-BOCS
+def threshold_normalize_img(img, thr=0, min_val=0, max_val=1):
+    """  Threshold image and normalize the remaining so that it takes values between min_val and max_val """
+    data = img.get_fdata().copy()
+    thr_data = data[data>thr]
+    rescaled = (thr_data - thr_data.min()) / (thr_data.max() - thr_data.min())
+    rescaled_data = np.zeros(data.shape)
+    rescaled_data[data>thr] = rescaled
+    return new_img_like(img, rescaled_data)
+
+
+def cohen_d(x,y):
+    """ Calculates effect size as cohen's d """
+    nx = len(x)
+    ny = len(y)
+    dof = nx + ny - 2
+    return (np.mean(x) - np.mean(y)) / np.sqrt(((nx-1)*np.std(x, ddof=1) ** 2 + (ny-1)*np.std(y, ddof=1) ** 2) / dof)
+
+def compute_stats(thresholds, args):
+    """ performs student's t-test between groups' mean TDI in pathways """
+    stats = dict()
+    for dsm,scm,roi,thr in itertools.product(dsi_metrics, sc_metrics, rois, thresholds):
+        t,p = scipy.stats.ttest_ind(np.array(dsi_m[dsm,scm,roi,thr, 'controls']['mean_dsi']), np.array(dsi_m[dsm,scm,roi,thr, 'patients']['mean_dsi']))
+        print("{} {} {} {} - t={:.3f} p={:.3f}".format(dsm,scm,roi,thr,t,p))
+        stats[dsm,scm,roi,thr] = {'t':t, 'p':p}
+    if args.save_outputs:
+        with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_stats_dict.pkl'), 'wb') as f:
+            pickle.dump(stats, f)
+
+
+
+## PLOTTING FUNCTIONS ##
+def plot_group_masks(dsi_m, thresholds, args):
+    for dsm,scm,roi,thr in itertools.product(dsi_metrics, sc_metrics, rois, thresholds):
+        unscaled_img = mean_img(np.concatenate([dsi_m[dsm,scm,roi,thr,'controls']['masks'], \
+                                                dsi_m[dsm,scm,roi,thr,'patients']['masks']]))
+        rescaled_img = threshold_normalize_img(unscaled_img)
+        if args.save_figs:
+            plot_roi(rescaled_img, cmap='Reds', threshold=0.00001, draw_cross=False,
+                      cut_coords=xyz[roi], alpha=0.8, title='{} avg mask at {}%'.format(roi, str(thr)),
+                      output_file=os.path.join(proj_dir, 'postprocessing', 'avg_mask_{}_{}percent.svg'.format(roi, str(thr))) )
+        if args.plot_figs:
+            plot_roi(rescaled_img, cmap='Reds', threshold=0.00001, draw_cross=False,
+                      cut_coords=xyz[roi], alpha=0.8)
+
+
+def plot_tdi_distrib(df_dsi, args):
+    fig = plt.figure(figsize=[8,4])
+
+    ax1 = plt.subplot(1,3,1)
+    sbn.violinplot(data=df_dsi, y='mean_dsi', x='roi', hue='cohorts', orient='v', ax=ax1, split=True, scale_hue=True,
+                   inner='quartile', dodge=True, width=0.8, cut=2)
+    #sbn.stripplot(data=df_dsi, y='mean_dsi', x='roi', hue='cohorts', orient='v', ax=ax1, split=True, dodge=False,
+    #              size=2, edgecolor='black', linewidth=0.5, jitter=0.25)
+    plt.ylim([0.09, 0.14]);
+    ax1.legend([])
+
+    ax2 = plt.subplot(1,3,2)
+    sbn.stripplot(data=df_dsi, y='mean_dsi', x='roi', hue='cohorts', orient='v', ax=ax2, dodge=True)
+    plt.ylim([0.09, 0.14]);
+
+    ax3 = plt.subplot(1,3,3)
+    bplot = sbn.boxplot(data=df_dsi, y='mean_dsi', x='roi', hue='cohorts', orient='v', ax=ax3, fliersize=0)
+    #bplot.set_facecolor('blue')
+    #bplot['boxes'][1].set_facecolor('orange')
+    splot = sbn.swarmplot(data=df_dsi, y='mean_dsi', x='roi', hue='cohorts', orient='v', ax=ax3, dodge=True, linewidth=1, size=6, alpha=0.6)
+    plt.ylim([0.09, 0.14]);
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    lgd = ax3.legend(handles=bplot.patches, labels=['HC', 'OCD'], bbox_to_anchor=(1, 1))
+    ax3.set_xticklabels(labels=['NAcc', 'dPut'], minor=True)
+    fig.tight_layout()
+
+    if args.plot_figs:
+        plt.show(block=False)
+
+    if args.save_figs:
+        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_'+str(thr)+'.svg'))
+
+    plt.close()
+
+
+
+if __name__=='__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--plot_indiv_masks', default=False, action='store_true', help='flag to plot individual masks')
+    parser.add_argument('--plot_group_masks', default=False, action='store_true', help='flag to plot group masks')
+    parser.add_argument('--keep_masks', default=False, action='store_true', help='flag to keep subjects in dict (take ~16Gb)')
+    parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
+    parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
+    parser.add_argument('--plot_figs', default=False, action='store_true', help='plot figures')
+    parser.add_argument('--compute_tdi', default=False, action='store_true', help='flag to compute track density maps, if not switched it tries to load them')
+    parser.add_argument('--plot_tdi_distrib', default=False, action='store_true', help='Plot difference in track density distributions (violin, strip, box plots)')
+    args = parser.parse_args()
+
+    # parameters
+    thresholds = np.arange(20,101,20) # in %
+    tdi_threshold_to_plot = thresholds[4] # plot 80%
+
+    if args.compute_tdi:
+        dsi_m = compute_tdi_maps(thresholds, args)
+    else:
+        with open(os.path.join(proj_dir, 'postprocessing', 'dsi_m.pkl'), 'rb') as f:
+            dsi_m = pickle.load(f)
+
+    compute_stats(thresholds, args)
+
+    # Effect size
+    df_dsi = create_df_dsi(dsi_m, tdi_threshold_to_plot)
+    cons = df_dsi[(df_dsi['cohorts']=='controls') & (df_dsi['roi']=='ACC_OFC_ROI')].mean_dsi
+    pats = df_dsi[(df_dsi['cohorts']=='patients') & (df_dsi['roi']=='ACC_OFC_ROI')].mean_dsi
+    print('Controls: mean={:.5f} std={:.5f} n={}'.format(cons.mean(), cons.std(), str(len(cons))))
+    print('Patients: mean={:.5f} std={:.5f} n={}'.format(pats.mean(), pats.std(), str(len(pats))))
+    print('cohen\'s d at threshold {} = {:.2f}'.format(str(tdi_threshold_to_plot), cohen_d(cons, pats)))
+
+    create_summary(df_dsi, args)
+
+    if args.plot_group_masks:
+        plot_group_masks(dsi_m, thresholds)
+
+    if args.plot_tdi_distrib:
+        plot_tdi_distrib(df_dsi, args)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # TODO: relation to Y-BOCS
