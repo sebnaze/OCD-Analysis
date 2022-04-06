@@ -5,6 +5,7 @@
 import argparse
 import bct
 import glob
+import gzip
 import h5py
 import itertools
 import joblib
@@ -16,7 +17,7 @@ import matplotlib.gridspec as gridspec
 import nibabel as nib
 import nilearn
 from nilearn import datasets
-from nilearn.image import load_img, new_img_like, resample_to_img, binarize_img, iter_img
+from nilearn.image import load_img, new_img_like, resample_to_img, binarize_img, iter_img, math_img
 from nilearn.plotting import plot_matrix, plot_glass_brain, plot_stat_map, plot_img_comparison, plot_img, plot_roi, view_img
 from nilearn.input_data import NiftiMasker, NiftiLabelsMasker, NiftiSpheresMasker
 from nilearn.glm.first_level import FirstLevelModel
@@ -30,11 +31,14 @@ import pandas as pd
 import scipy
 from scipy.io import loadmat
 from scipy import ndimage
+import shutil
 import statsmodels
 from statsmodels.stats import multitest
 import time
 from time import time
 import platform
+import warnings
+warnings.filterwarnings('once')
 
 # get computer name to set paths
 if platform.node()=='qimr18844':
@@ -75,6 +79,12 @@ seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
         'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
         'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
 
+cohorts = ['controls', 'patients']
+
+def none_or_float(value):
+    if value == 'None':
+        return None
+    return float(value)
 
 def create_design_matrix(subjs):
     """ Create a simple group difference design matrix """
@@ -91,7 +101,7 @@ def create_design_matrix(subjs):
     return design_matrix
 
 
-def seed_to_voxel(subj, seeds, metrics, atlases):
+def seed_to_voxel(subj, seeds, metrics, atlases, smoothing_fwhm=8.):
     """ perform seed-to-voxel analysis of bold data """
     # prepare output directory
     out_dir = os.path.join(proj_dir, 'postprocessing', subj)
@@ -106,8 +116,8 @@ def seed_to_voxel(subj, seeds, metrics, atlases):
         bold_file = os.path.join(lukeH_deriv_dir, 'post-fmriprep-fix', subj,'func', \
                                  subj+'_task-rest_space-'+img_space+'_desc-'+metric+'_scrub.nii.gz')
         bold_img = nib.load(bold_file)
-        brain_masker = NiftiMasker(smoothing_fwhm=4, standardize=True, t_r=0.81, \
-            low_pass=0.1, high_pass=0.01, memory_level=1, verbose=0)
+        brain_masker = NiftiMasker(smoothing_fwhm=smoothing_fwhm, standardize=True, t_r=0.81, \
+            low_pass=0.1, high_pass=0.01, verbose=0)
         voxels_ts = brain_masker.fit_transform(bold_img)
 
         for atlas in atlases:
@@ -133,7 +143,7 @@ def seed_to_voxel(subj, seeds, metrics, atlases):
 
 
 # TODO: should refactor this function, only a few lines changed from the one above
-def sphere_seed_to_voxel(subj, seeds, metrics, atlases=['Harrison2009']):
+def sphere_seed_to_voxel(subj, seeds, metrics, atlases=['Harrison2009'], args=None):
     """ perform seed-to-voxel analysis of bold data using Harrison2009 3.5mm sphere seeds"""
     # prepare output directory
     out_dir = os.path.join(proj_dir, 'postprocessing', subj)
@@ -150,18 +160,19 @@ def sphere_seed_to_voxel(subj, seeds, metrics, atlases=['Harrison2009']):
         bold_file = os.path.join(deriv_dir, 'post-fmriprep-fix', subj,'func', \
                                  subj+'_task-rest_space-'+img_space+'_desc-'+metric+'.nii.gz')
         bold_img = nib.load(bold_file)
-        brain_masker = NiftiMasker(smoothing_fwhm=8, t_r=0.81, \
-            low_pass=0.1, high_pass=0.01, memory_level=1, verbose=0)
+        brain_masker = NiftiMasker(smoothing_fwhm=args.brain_smoothing_fwhm, t_r=0.81, \
+            low_pass=0.1, high_pass=0.01, verbose=0)
         voxels_ts = brain_masker.fit_transform(bold_img)
 
         # extract seed timeseries and perform seed-to-voxel correlation
         for seed in seeds:
             seed_masker = NiftiSpheresMasker([np.array(seed_loc[seed])], radius=3.5, t_r=0.81, \
-                                low_pass=0.1, high_pass=0.01, memory='nilearn_cache', memory_level=1, verbose=0)
+                                low_pass=0.1, high_pass=0.01, verbose=0)
             seed_ts = np.squeeze(seed_masker.fit_transform(bold_img))
             seed_to_voxel_corr = np.dot(voxels_ts.T, seed_ts)/seed_ts.shape[0]
             seed_to_voxel_corr_img = brain_masker.inverse_transform(seed_to_voxel_corr)
-            fname = '_'.join([subj,metric,atlas,seed,'ns_sphere_seed_to_voxel_corr.nii.gz'])
+            fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+            fname = '_'.join([subj,metric,fwhm,atlas,seed,'ns_sphere_seed_to_voxel_corr.nii.gz'])
             nib.save(seed_to_voxel_corr_img, os.path.join(out_dir, fname))
     print('{} seed_to_voxel correlation performed in {}s'.format(subj,int(time()-t0)))
 
@@ -178,14 +189,16 @@ def merge_LR_hemis(subjs, seeds, metrics, seed_type='sphere_seed_to_voxel', atla
                 else:
                     coh = 'patients'
 
-                fnames = [os.path.join(proj_dir, 'postprocessing', subj, '_'.join([subj,metric,atlas,seed+hemi,'ns_sphere_seed_to_voxel_corr.nii.gz']))
+                fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+                fnames = [os.path.join(proj_dir, 'postprocessing', subj, '_'.join([subj,metric,fwhm,atlas,seed+hemi,'ns_sphere_seed_to_voxel_corr.nii.gz']))
                           for hemi in hemis]
                 new_img = nilearn.image.mean_img(fnames)
                 #fname = s+'_detrend_gsr_filtered_'+seed+'_sphere_seed_to_voxel_corr.nii'
-                fname = '_'.join([subj,metric,atlas,seed])+'_ns_sphere_seed_to_voxel_corr.nii'
-                os.makedirs(os.path.join(args.in_dir, metric, seed, coh), exist_ok=True)
-                nib.save(new_img, os.path.join(args.in_dir, metric, seed, coh, fname))
-                in_fnames[(seed,metric)].append(os.path.join(args.in_dir, metric, seed, coh, fname))
+                fname = '_'.join([subj,metric,fwhm,atlas,seed])+'_ns_sphere_seed_to_voxel_corr.nii'
+                os.makedirs(os.path.join(args.in_dir, metric, fwhm, seed, coh), exist_ok=True)
+                nib.save(new_img, os.path.join(args.in_dir, metric, fwhm, seed, coh, fname))
+                in_fnames[(seed,metric)].append(os.path.join(args.in_dir, metric, fwhm, seed, coh, fname))
+    print('Merged L-R hemishperes')
     return in_fnames
 
 
@@ -195,6 +208,7 @@ def prep_fsl_randomise(in_fnames, seeds, metrics, args):
     masker = NiftiMasker(gm_mask)
 
     ind_mask = False  # whether to apply GM mask to individual 3D images separatetely or already combined in 4D image
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
 
     for metric,seed in itertools.product(metrics,seeds):
         if ind_mask:
@@ -215,29 +229,32 @@ def prep_fsl_randomise(in_fnames, seeds, metrics, args):
             masker.generate_report()
             masked_data = masker.transform(img)
             imgs = masker.inverse_transform(masked_data) #nib.Nifti1Image(masked_data, img.affine, img.header)
-        nib.save(imgs, os.path.join(args.in_dir, metric, 'masked_resampled_pairedT4D_'+seed))
+        nib.save(imgs, os.path.join(args.in_dir, metric, fwhm, 'masked_resampled_pairedT4D_'+seed))
 
     # saving design matrix and contrast
     design_matrix = create_design_matrix(subjs)
     design_con = np.hstack((1, -1)).astype(int)
-    np.savetxt(os.path.join(args.in_dir, metric, 'design_mat'), design_matrix, fmt='%i')
-    np.savetxt(os.path.join(args.in_dir, metric, 'design_con'), design_con, fmt='%i', newline=' ')
+    np.savetxt(os.path.join(args.in_dir, metric, fwhm, 'design_mat'), design_matrix, fmt='%i')
+    np.savetxt(os.path.join(args.in_dir, metric, fwhm, 'design_con'), design_con, fmt='%i', newline=' ')
 
 
 def unzip_correlation_maps(subjs, metrics, atlases, seeds, args):
     """ extract .nii files from .nii.gz and put them in place for analysis with SPM (not used if only analysing with nilearn) """
-    [os.makedirs(os.path.join(args.in_dir, metric, seed, coh), exist_ok=True) \
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    [os.makedirs(os.path.join(args.in_dir, metric, fwhm, seed, coh), exist_ok=True) \
             for metric,seed,coh in itertools.product(metrics,seeds,cohorts)]
 
+    print('Unzipping seed-based correlation maps for use in SPM...')
+
     for subj,metric,atlas,seed in itertools.product(subjs,metrics,atlases,seeds):
-        fname = '_'.join([subj,metric,atlas,seed])+'_ns_sphere_seed_to_voxel_corr.nii.gz'
+        fname = '_'.join([subj,metric,fwhm,atlas,seed])+'_ns_sphere_seed_to_voxel_corr.nii.gz'
         infile = os.path.join(proj_dir, 'postprocessing', subj, fname)
         if 'control' in subj:
             coh = 'controls'
         else:
             coh = 'patients'
         with gzip.open(infile, 'rb') as f_in:
-            with open(os.path.join(args.in_dir, metric, seed, coh, fname[:-3]), 'wb') as f_out:
+            with open(os.path.join(args.in_dir, metric, fwhm, seed, coh, fname[:-3]), 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
 
 
@@ -273,7 +290,8 @@ def create_local_sphere_within_cluster(vois, rois, metrics, args=None, sphere_ra
                 else:
                     coh = 'patients'
 
-                corr_file = '_'.join([subj,metric,atlas,roi,'ns_sphere_roi_to_voxel_corr.nii'])
+                fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+                corr_file = '_'.join([subj,metric,fwhm,atlas,roi,'ns_sphere_roi_to_voxel_corr.nii'])
                 corr_fname = os.path.join(corr_path, roi, coh, corr_file)
                 img = load_img(corr_fname)
                 mask = load_img(proj_dir+'/postprocessing/SPM/rois_and_rois/'+voi+'.nii')
@@ -291,27 +309,41 @@ def create_local_sphere_within_cluster(vois, rois, metrics, args=None, sphere_ra
     return max_locals
 
 
-def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, revoked=[], mask=[]):
-    """ Perform second level analysis based on seed-to-voxel correlation maps """
+def resample_masks(masks):
+    """ resample all given masks to the affine of the first in list """
+    ref_mask = masks[0]
+    out_masks = [ref_mask]
+    for mask in masks[1:]:
+        out_masks.append(resample_to_img(mask, ref_mask, interpolation='nearest'))
+    return out_masks
 
-    con_flist = glob.glob(os.path.join(args.in_dir, metric, seed, 'controls', '*'))
-    pat_flist = glob.glob(os.path.join(args.in_dir, metric, seed, 'patients', '*'))
+def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, revoked=[], masks=[]):
+    """ Perform second level analysis based on seed-to-voxel correlation maps """
+    # naming convention is file system
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+
+    # get images path
+    con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
+    pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
     flist = np.hstack([con_flist, pat_flist])
 
+    # remove revoked subjects
     if revoked != []:
         flist = [l for l in flist if ~np.any([s in l for s in revoked])]
 
+    # mask images to improve SNR
     if args.use_gm_mask:
         gm_mask = datasets.load_mni152_gm_mask()
-        mask.append(binarize_img(gm_mask))
-    if args.use_fspt_mask:
+        masks.append(binarize_img(gm_mask))
+    if args.use_fspt_mask: ## not sure it works fine
         fspt_mask = load_img(os.path.join(proj_dir, 'utils', 'Larger_FrStrPalThal_schaefer400_tianS4MNI_lps_mni.nii'), dtype=np.float64)
-        if mask==[]:
-            mask.append(binarize_img(fspt_mask))
-        else:
-            mask.append(binarize_img(resample_to_img(fspt_mask, mask[0])))
-    if mask != []:
-        mask = nilearn.masking.intersect_masks(mask)
+        masks.append(binarize_img(fspt_mask))
+    if args.use_cortical_mask:
+        ctx_mask = load_img(os.path.join(proj_dir, 'utils', 'schaefer_cortical.nii'), dtype=np.float64)
+        masks.append(binarize_img(ctx_mask))
+    if masks != []:
+        masks = resample_masks(masks)
+        mask = nilearn.masking.intersect_masks(masks, threshold=1, connected=False) # thr=1 : intersection; thr=0 : union
         masker = NiftiMasker(mask)
         masker.fit(imgs=list(flist))
         #masker.generate_report() # use for debug
@@ -321,13 +353,18 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     else:
         imgs = list(flist)
         masker=None
+
+    # perform analysis
     glm = SecondLevelModel(mask_img=masker)
     glm.fit(imgs, design_matrix=design_matrix)
-    contrasts = glm.compute_contrast(np.array([1, -1]), output_type='all')
+    contrasts = dict()
+    contrasts['within_con'] = glm.compute_contrast(np.array([1, 0]), output_type='all')
+    contrasts['within_pat'] = glm.compute_contrast(np.array([0, 1]), output_type='all')
+    contrasts['between'] = glm.compute_contrast(np.array([1, -1]), output_type='all')
     n_voxels = np.sum(nilearn.image.get_data(glm.masker_.mask_img_))
     return contrasts, n_voxels
 
-def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_threshold=20):
+def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_threshold=10):
     """ cluster threshold contrast at alpha with height_control method for multiple comparisons """
     thresholded_img, thresh = threshold_stats_img(
         contrast, alpha=alpha, height_control=height_control, cluster_threshold=cluster_threshold)
@@ -335,6 +372,76 @@ def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_thre
         contrast, stat_threshold=thresh, cluster_threshold=cluster_threshold,
         two_sided=True, min_distance=5.0)
     return thresholded_img, thresh, cluster_table
+
+def create_within_group_mask(subroi_glm_results):
+    """ create within group masks to use for between group contrasts to improve SNR """
+    con_img, con_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_con']['z_score'], cluster_threshold=80)
+    con_mask = binarize_img(con_img, threshold=con_thr)
+    pat_img, pat_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_pat']['z_score'], cluster_threshold=80)
+    pat_mask = binarize_img(pat_img, threshold=pat_thr)
+    mask = nilearn.masking.intersect_masks([con_mask, pat_mask], threshold=0, connected=False)
+    return mask, con_mask, pat_mask
+
+
+def run_second_level(subjs, metrics, subrois, args):
+    """ Run second level analysis """
+    design_matrix = create_design_matrix(subjs)
+
+    glm_results = dict()
+    for metric,subroi in itertools.product(metrics,subrois):
+        print('Starting 2nd level analysis for '+subroi+' subroi.')
+        t0 = time()
+        glm_results[subroi] = dict()
+        glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, revoked=revoked)
+
+        within_group_mask, con_mask, pat_mask = create_within_group_mask(glm_results[subroi])
+
+        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, revoked=revoked, masks=[within_group_mask])
+
+        # Correcting the p-values for multiple testing and taking negative logarithm
+        #neg_log_pval = nilearn.image.math_img("-np.log10(np.maximum(1, img * {}))"
+        #                .format(str(glm_results[subroi]['n_voxels'])),
+        #                img=glm_results[subroi]['contrasts']['between']['p_value'])
+        #glm_results[subroi]['neg_log_pval'] = neg_log_pval
+
+
+        glm_results[subroi][('fpr',0.001,'thresholded_img')], \
+            glm_results[subroi][('fpr',0.001,'thresh')], \
+            glm_results[subroi][('fpr',0.001,'cluster_table')] = threshold_contrast( \
+                            glm_results[subroi]['second_pass','contrasts']['between']['z_score'])
+
+        print('Clusters at p<0.001 uncorrected:')
+        print(glm_results[subroi][('fpr',0.001,'cluster_table')])
+
+        glm_results[subroi][('fdr',args.fdr_threshold,'thresholded_img')], \
+            glm_results[subroi][('fdr',args.fdr_threshold,'thresh')], \
+            glm_results[subroi][('fdr',args.fdr_threshold,'cluster_table')] = threshold_contrast( \
+                            glm_results[subroi]['second_pass','contrasts']['between']['z_score'], height_control='fdr', alpha=args.fdr_threshold)
+
+        print('Clusters at p<{:.2f} FDR corrected:'.format(args.fdr_threshold))
+        print(glm_results[subroi][('fdr',args.fdr_threshold,'cluster_table')])
+
+
+        if args.plot_figs:
+            fig = plt.figure(figsize=[16,4])
+            ax1 = plt.subplot(1,2,1)
+            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
+                            axes=ax1, title=subroi+'_contrast_fpr0001')
+            ax2 = plt.subplot(1,2,2)
+            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fdr',args.fdr_threshold,'thresh')],
+                            axes=ax2, title=subroi+'_contrast_fdr005')
+
+        if args.save_figs:
+            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
+            output_file=os.path.join(args.out_dir,subroi+'_contrast_fpr0001.pdf'))
+
+        # savings
+        if args.save_outputs:
+            with open(os.path.join(args.out_dir,subroi+'_outputs.pkl'), 'wb') as of:
+                pickle.dump(glm_results, of)
+
+        print('Finished 2nd level analysis for '+subroi+' ROI in {:.2f}s'.format(time()-t0))
+    return glm_results
 
 if __name__=='__main__':
 
@@ -350,10 +457,13 @@ if __name__=='__main__':
     parser.add_argument('--run_second_level', default=False, action='store_true', help='run second level statistics')
     parser.add_argument('--use_gm_mask', default=False, action='store_true', help='use a gray matter mask to reduce the space of the second level analysis')
     parser.add_argument('--use_fspt_mask', default=False, action='store_true', help='use a fronto-striato-pallido-thalamic mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_cortical_mask', default=False, action='store_true', help='use a cortical mask to reduce the space of the second level analysis')
     parser.add_argument('--unzip_corr_maps', default=False, action='store_true', help='unzip correlation maps for use in SPM (not necessary if only nilearn analysis)')
     parser.add_argument('--min_time_after_scrubbing', default=None, type=float, action='store', help='minimum time (in minutes) needed per subject needed to be part of the analysis (after scrubbing (None=keep all subjects))')
     parser.add_argument('--prep_fsl_randomise', default=False, action='store_true', help='Prepare 4D images for running FSL randomise')
     parser.add_argument('--create_sphere_within_cluster', default=False, action='store_true', help='export sphere around peak within VOI cluster in prep for DCM analysis')
+    parser.add_argument('--brain_smoothing_fwhm', default=8., type=none_or_float, action='store', help='brain smoothing FWHM (default 8mm as in Harrison 2009)')
+    parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -365,7 +475,7 @@ if __name__=='__main__':
     atlases= ['Harrison2009'] #['schaefer100_tianS1', 'schaefer200_tianS2', 'schaefer400_tianS4'] #schaefer400_harrison2009
     #metrics = ['detrend_filtered', 'detrend_gsr_filtered']
     pre_metric = 'seed_not_smoothed' #'unscrubbed_seed_not_smoothed'
-    metrics = ['detrend_filtered_scrubFD06'] #'detrend_gsr_smooth-6mm',
+    metrics = ['detrend_gsr_filtered_scrubFD05'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
 
     #TODO: in_dir must be tailored to the atlas. ATM everything is put in Harrison2009 folder
     args.in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/', args.seed_type+'Rep', pre_metric)
@@ -386,7 +496,10 @@ if __name__=='__main__':
     # Then process data
     if args.compute_seed_corr:
         for atlas in atlases:
-            Parallel(n_jobs=args.n_jobs)(delayed(seedfunc[args.seed_type])(subj,seeds,metrics,atlases) for subj in subjs)
+            Parallel(n_jobs=args.n_jobs)(delayed(seedfunc[args.seed_type])(subj,seeds,metrics,atlases,args) for subj in subjs)
+
+    if args.unzip_corr_maps:
+        unzip_correlation_maps(subjs, metrics, atlases, seeds, args)
 
     if args.merge_LR_hemis:
         in_fnames = merge_LR_hemis(subjs, subrois, metrics, seed_type=str(seedfunc[args.seed_type]), args=args)
@@ -395,54 +508,8 @@ if __name__=='__main__':
         if args.prep_fsl_randomise:
             prep_fsl_randomise(in_fnames, subrois, metrics, args)
 
-
-    if args.unzip_corr_maps:
-        unzip_correlation_maps(subjs, metrics, atlases, subrois, args)
-
     if args.run_second_level:
-        design_matrix = create_design_matrix(subjs)
-
         out_dir = os.path.join(proj_dir, 'postprocessing', 'glm', pre_metric)
         os.makedirs(out_dir, exist_ok=True)
-
-        glm_results = dict()
-        for metric,subroi in itertools.product(metrics,subrois):
-            print('Starting 2nd level analysis for '+subroi+' subroi.')
-            t0 = time()
-            glm_results[subroi] = dict()
-            glm_results[subroi]['contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, revoked=revoked)
-            # Correcting the p-values for multiple testing and taking negative logarithm
-            neg_log_pval = nilearn.image.math_img("-np.log10(np.maximum(1, img * {}))"
-                            .format(str(glm_results[subroi]['n_voxels'])),
-                            img=glm_results[subroi]['contrasts']['p_value'])
-            glm_results[subroi]['neg_log_pval'] = neg_log_pval
-            #for k in glm_results[subroi]['contrasts'].keys():
-            #glm_results[subroi][k] = dict()
-            glm_results[subroi][('fpr',0.001,'thresholded_img')], \
-                glm_results[subroi][('fpr',0.001,'thresh')], \
-                glm_results[subroi][('fpr',0.001,'cluster_table')] = threshold_contrast(glm_results[subroi]['contrasts']['z_score'])
-
-            print('Clusters at p<0.001 uncorrected:')
-            print(glm_results[subroi][('fpr',0.001,'cluster_table')])
-
-            glm_results[subroi][('fdr',0.05,'thresholded_img')], \
-                glm_results[subroi][('fdr',0.05,'thresh')], \
-                glm_results[subroi][('fdr',0.05,'cluster_table')] = threshold_contrast(glm_results[subroi]['contrasts']['z_score'], height_control='fdr', alpha=0.05)
-
-            print('Clusters at p<0.05 FDR corrected:')
-            print(glm_results[subroi][('fdr',0.05,'cluster_table')])
-
-            if args.plot_figs:
-                plot_stat_map(glm_results[subroi]['contrasts']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
-                                title=subroi+'_contrast_fpr0001')
-
-            if args.save_figs:
-                plot_stat_map(glm_results[subroi]['contrasts']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
-                output_file=os.path.join(out_dir,subroi+'_contrast_fpr0001.pdf'))
-
-            # savings
-            if args.save_outputs:
-                with open(os.path.join(out_dir,subroi+'_outputs.pkl'), 'wb') as of:
-                    pickle.dump(glm_results, of)
-
-            print('Finished 2nd level analysis for '+subroi+' ROI in {:.2f}s'.format(time()-t0))
+        args.out_dir = out_dir
+        glm_results = run_second_level(subjs, metrics, subrois, args)
