@@ -317,7 +317,7 @@ def resample_masks(masks):
         out_masks.append(resample_to_img(mask, ref_mask, interpolation='nearest'))
     return out_masks
 
-def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, revoked=[], masks=[]):
+def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, masks=[]):
     """ Perform second level analysis based on seed-to-voxel correlation maps """
     # naming convention is file system
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
@@ -328,10 +328,11 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     flist = np.hstack([con_flist, pat_flist])
 
     # remove revoked subjects
-    if revoked != []:
+    if args.revoked != []:
         flist = [l for l in flist if ~np.any([s in l for s in revoked])]
 
     # mask images to improve SNR
+    t_mask = time()
     if args.use_gm_mask:
         gm_mask = datasets.load_mni152_gm_mask()
         masks.append(binarize_img(gm_mask))
@@ -353,14 +354,22 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     else:
         imgs = list(flist)
         masker=None
+    print('Masking took {:.2f}s'.format(time()-t_mask))
 
     # perform analysis
+    t_glm = time()
     glm = SecondLevelModel(mask_img=masker)
     glm.fit(imgs, design_matrix=design_matrix)
+    print('GLM fitting took {:.2f}s'.format(time()-t_glm))
+
     contrasts = dict()
+    t0 = time()
     contrasts['within_con'] = glm.compute_contrast(np.array([1, 0]), output_type='all')
+    t1 = time()
     contrasts['within_pat'] = glm.compute_contrast(np.array([0, 1]), output_type='all')
+    t2 =  time()
     contrasts['between'] = glm.compute_contrast(np.array([1, -1]), output_type='all')
+    print('within groups and between group contrasts took {:.2f}, {:.2f} and {:.2f}s'.format(t1-t0, t2-t1, time()-t2))
     n_voxels = np.sum(nilearn.image.get_data(glm.masker_.mask_img_))
     return contrasts, n_voxels
 
@@ -375,9 +384,9 @@ def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_thre
 
 def create_within_group_mask(subroi_glm_results):
     """ create within group masks to use for between group contrasts to improve SNR """
-    con_img, con_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_con']['z_score'], cluster_threshold=80)
+    con_img, con_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_con']['z_score'], cluster_threshold=100)
     con_mask = binarize_img(con_img, threshold=con_thr)
-    pat_img, pat_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_pat']['z_score'], cluster_threshold=80)
+    pat_img, pat_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_pat']['z_score'], cluster_threshold=100)
     pat_mask = binarize_img(pat_img, threshold=pat_thr)
     mask = nilearn.masking.intersect_masks([con_mask, pat_mask], threshold=0, connected=False)
     return mask, con_mask, pat_mask
@@ -392,11 +401,18 @@ def run_second_level(subjs, metrics, subrois, args):
         print('Starting 2nd level analysis for '+subroi+' subroi.')
         t0 = time()
         glm_results[subroi] = dict()
-        glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, revoked=revoked)
 
+        t_fp = time()
+        glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args)
+        print('{} first pass in {:.2f}s'.format(subroi,time()-t_fp))
+
+        t_wmask = time()
         within_group_mask, con_mask, pat_mask = create_within_group_mask(glm_results[subroi])
+        print('created within groups mask in {:.2f}s'.format(time()-t_wmask))
 
-        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, revoked=revoked, masks=[within_group_mask])
+        t_sp = time()
+        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[within_group_mask])
+        print('{} second pass in {:.2f}s'.format(subroi,time()-t_sp))
 
         # Correcting the p-values for multiple testing and taking negative logarithm
         #neg_log_pval = nilearn.image.math_img("-np.log10(np.maximum(1, img * {}))"
@@ -404,7 +420,7 @@ def run_second_level(subjs, metrics, subrois, args):
         #                img=glm_results[subroi]['contrasts']['between']['p_value'])
         #glm_results[subroi]['neg_log_pval'] = neg_log_pval
 
-
+        t_thr = time()
         glm_results[subroi][('fpr',0.001,'thresholded_img')], \
             glm_results[subroi][('fpr',0.001,'thresh')], \
             glm_results[subroi][('fpr',0.001,'cluster_table')] = threshold_contrast( \
@@ -421,26 +437,36 @@ def run_second_level(subjs, metrics, subrois, args):
         print('Clusters at p<{:.2f} FDR corrected:'.format(args.fdr_threshold))
         print(glm_results[subroi][('fdr',args.fdr_threshold,'cluster_table')])
 
+        print('Thresholding and clustering took {:.2f}s'.format(time()-t_thr))
 
         if args.plot_figs:
+            t_plt = time()
             fig = plt.figure(figsize=[16,4])
             ax1 = plt.subplot(1,2,1)
             plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
                             axes=ax1, title=subroi+'_contrast_fpr0001')
             ax2 = plt.subplot(1,2,2)
             plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fdr',args.fdr_threshold,'thresh')],
-                            axes=ax2, title=subroi+'_contrast_fdr005')
-
+                            axes=ax2, title=subroi+'_contrast_fdr{:03d}'.format(int(args.fdr_threshold*100)))
+            print('{} plotting took {:.2f}s'.format(subroi,time()-t_plt))
         if args.save_figs:
             plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
             output_file=os.path.join(args.out_dir,subroi+'_contrast_fpr0001.pdf'))
 
-        # savings
-        if args.save_outputs:
-            with open(os.path.join(args.out_dir,subroi+'_outputs.pkl'), 'wb') as of:
-                pickle.dump(glm_results, of)
-
         print('Finished 2nd level analysis for '+subroi+' ROI in {:.2f}s'.format(time()-t0))
+
+    # savings
+    if args.save_outputs:
+        suffix = '_'+metric
+        if args.min_time_after_scrubbing!=None:
+            suffix += '_minLength'+str(int(args.min_time_after_scrubbing*10))
+        if args.use_fspt_mask:
+            suffix += '_fsptMask'
+        if args.use_cortical_mask:
+            suffix += '_corticalMask'
+        with open(os.path.join(args.out_dir,'glm_results'+suffix+'.pkl'), 'wb') as of:
+            pickle.dump(glm_results, of)
+
     return glm_results
 
 if __name__=='__main__':
@@ -475,7 +501,7 @@ if __name__=='__main__':
     atlases= ['Harrison2009'] #['schaefer100_tianS1', 'schaefer200_tianS2', 'schaefer400_tianS4'] #schaefer400_harrison2009
     #metrics = ['detrend_filtered', 'detrend_gsr_filtered']
     pre_metric = 'seed_not_smoothed' #'unscrubbed_seed_not_smoothed'
-    metrics = ['detrend_gsr_filtered_scrubFD05'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
+    metrics = ['detrend_gsr_filtered_scrubFD06'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
 
     #TODO: in_dir must be tailored to the atlas. ATM everything is put in Harrison2009 folder
     args.in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/', args.seed_type+'Rep', pre_metric)
@@ -492,6 +518,7 @@ if __name__=='__main__':
         subjs, revoked = get_subjs_after_scrubbing(subjs, metrics, min_time=args.min_time_after_scrubbing)
     else:
         revoked=[]
+    args.revoked=revoked
 
     # Then process data
     if args.compute_seed_corr:
