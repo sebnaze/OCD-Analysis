@@ -267,13 +267,13 @@ pipelines = {'detrend_filtered_smooth-6mm': { 'niipath': rest_nii,
                               'task': 'rest'}}
 """
 
-pipelines = {'detrend_gsr_filtered_scrubFD08': { 'niipath': rest_nii,
+pipelines = {'detrend_gsr_filtered_scrubFD05': { 'niipath': rest_nii,
                                               'maskpath': rest_msk,
                                               'tsvpath': rest_tsv,
                                               'add_orig_mean_img': True,
                                               'confound_list': ['global_signal'],
                                               'detrend': True,
-                                              'fmw_disp_th': 0.8,
+                                              'fmw_disp_th': 0.5,
                                               'fwhm': 0,
                                               'high_pass': 0.01,
                                               'low_pass': 0.1,
@@ -282,6 +282,22 @@ pipelines = {'detrend_gsr_filtered_scrubFD08': { 'niipath': rest_nii,
                                               'tr': 0.81,
                                               'num_confounds': 1,
                                               'task': 'rest'}}
+
+"""             'detrend_gsr_smooth-6mm': { 'niipath': rest_nii,
+                                              'maskpath': rest_msk,
+                                              'tsvpath': rest_tsv,
+                                              'add_orig_mean_img': True,
+                                              'confound_list': ['global_signal'],
+                                              'detrend': True,
+                                              'fmw_disp_th': None,
+                                              'fwhm': 6,
+                                              'high_pass': None,
+                                              'low_pass': None,
+                                              'scrubbing': False,
+                                              'remove_volumes': False,
+                                              'tr': 0.81,
+                                              'num_confounds': 1,
+                                              'task': 'rest'}}"""
 
 
 for pl_label in pipelines:

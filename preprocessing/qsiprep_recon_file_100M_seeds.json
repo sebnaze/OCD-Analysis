@@ -1,14 +1,7 @@
 {
   "name": "mrtrix_multishell_msmt_version2020",
   "space": "T1w",
-  "atlases": ["schaefer100x7", "schaefer100x17",
-              "schaefer200x7", "schaefer200x17",
-              "schaefer400x7", "schaefer400x17", 
-              "brainnetome246", "aicha384", 
-              "gordon333", "aal116", "power264",
-              "schaefer100_tianS1", "schaefer100_tianS2", "schaefer100_tianS3", "schaefer100_tianS4",
-              "schaefer200_tianS1", "schaefer200_tianS2", "schaefer200_tianS3", "schaefer200_tianS4",
-              "schaefer400_tianS1", "schaefer400_tianS2", "schaefer400_tianS3", "schaefer400_tianS4"],
+  "atlases": ["schaefer100_tianS1", "schaefer200_tianS2", "schaefer400_tianS4"],
   "anatomical": ["mrtrix_5tt"],
   "nodes": [
     {
