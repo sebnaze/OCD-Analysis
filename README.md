@@ -10,9 +10,9 @@ Table of contents
 * [Installation](#installation)
 * [Usage](#usage)
   - [Workflow](#workflow)
-    + [Functional analysis](#functional)
-    + [Structural analysis](#structural)
-    + [Effective connectivity](#effective)
+    + [Functional analysis](#functional analysis)
+    + [Structural analysis](#structural analysis)
+    + [Effective connectivity](#effective connectivity)
   - [Code structure](#code)
 * [Known issues and limitations](#known-issues-and-limitations)
 * [Getting help](#getting-help)
@@ -39,18 +39,19 @@ Then from the root of this source repository (where the `setup.py` is located), 
 Usage
 -----
 
-We provide an overall walkthrough of the analysis to reproduce the results of the study in the [Workflow](#workflow) section.
+[Workflow](#workflow) provides an overall walkthrough of each of the 3 analysis ([functional](#functional analysis), [structural](#structural analysis) and [effective](#effective analysis)) to reproduce the results of the study.
 
-A more specific description of each module is presented in [Code structure](#code).
 
-For details about each module, refer to each file separately.
+[Code structure](#code structure) provides a more specific description of each module.
 
-#### Workflow
+For more details about each module, refer to each file separately.
+
+### Workflow
 
 This project contains 3 "*streams*" of analysis: functional, structural, and effective connectivity analysis.
 > _n.b. technically the effective connectivity analysis is also functional_
 
-###### Functional analysis
+##### Functional analysis
 > The functional analysis assumes that [fMRIPrep](https://github.com/nipreps/fmriprep) has already been run. Before running the following scripts, ensure that the path to the project directory `proj_dir` is correctly set in those scripts and that the output folder `derivatives` has been generated from fMRIPrep with its adequate content.
 
 To perform several preprocessing steps (denoising, filtering, global signal regression, scrubbing, etc.), and the first-level SPM analysis; from the HPC cluster run the following PBS script
@@ -66,7 +67,7 @@ The second-level SPM analysis is performed by running the following command:
 Here, the arguments indicate to discard subjects with less than 2 minutes of data after scrubbing was performed, use the 8mm spatially smoothed data (need to be preprocessed accordingly above) and to use a FDR corrected p-value threshold of 0.05.
 
 
-###### Structural analysis
+##### Structural analysis
 
 The structural connectivity analysis starts by running the [QSIPrep](https://github.com/PennLINC/qsiprep) pipeline to preprocess DWI and perform tractography.
 This is performed in the HPC cluster through the following script:
@@ -75,7 +76,7 @@ This is performed in the HPC cluster through the following script:
 
 The parameters used for DWI preprocessing and the tractography algorithm can be found in `preprocessing/qsiprep_recon_file_100M_seeds.json`.
 
-For each subject, this creates 100 millions streamlines and a connectivity matrix following some established atlases. However, we now want to focus on the structural connectivity between the volumes of interests (cluster or seed VOIs) extracted from the functional analysis. This implies creating a new parcellation (or brain atlas) from those VOIs.
+For each subject, this creates 100 millions streamlines and connectivity matrices following some established atlases. However, we now want to focus on the structural connectivity between the volumes of interests (cluster or seed VOIs) involved in the functional analysis. This implies creating a new parcellation (or brain atlas) from those VOIs.
 > _#TODO:_ explain how to create atlas from VOIs
 
 and generating a connectivity matrix from this new atlas:
@@ -91,10 +92,28 @@ and finally run the voxel-wise analysis that extract the GFA using specific path
     voxelwise_diffusion_analysis.py --compute_tdi --plot_tdi_distrib --plot_figs
 
 
-###### Effective connectivity analysis
+##### Effective connectivity analysis
 
-The effective connectivity analysis uses DCM, which is part of SPM12 software that runs on MATLAB.
+> The effective connectivity analysis uses DCM, which is part of SPM12 bundle and runs on MATLAB. It is located in the `dcm` folder.
 
+The first step is to perform the first level SPM analysis, which is scripted in an SPM matlabbatch, from matlab command-line, runs
+
+    spm_first_level_matlabbatch.m
+
+Given that the volumes of interests (VOIs) have been extracted from the functional analysis above, this creates a `SPM.mat` file for each subject and extracts the time series of each VOI in a separate `VOI_XXX_1.mat` where XXX is the VOI name.
+Any additional VOI can added and its time series extracted using the following script:
+
+    spm_loop_local_cluster_matlabbatch.m
+
+Once this is done, we can estimate the model. We here use a monostable bilinear stochastic model, and fit it to the BOLD signal using spectral DCM. It is performed in he following script:
+
+     dcm_specify_estimate_AccOFC_PutPFC_vPutdPFC.m
+
+Finally, we create a large number of models spanning several connectivity profiles using Parametric Empirical Bayes (PEB).
+
+    peb_second_level_redesigned.m
+
+This effectively probes which connectivity changes are most likely to induce the effects observed between are two groups (controls vs patients), using Bayesian Model Averaging. The results are exposed through the matlab GUI.
 
 
 #### Code structure
