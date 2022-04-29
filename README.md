@@ -7,7 +7,7 @@ Structural and Functional Neuroimaging analysis of OCD baseline data in view of 
 
 Table of contents
 -----------------
-* [Installation](#installation) 
+* [Installation](#installation)
 * [Usage](#usage)
   - [Workflow](#workflow)
     + [Functional analysis](#functional-analysis)
@@ -46,12 +46,12 @@ Usage
 
 For more details about each module, refer to each file separately.
 
-### Workflow
+## Workflow
 
 This project contains 3 "*streams*" of analysis: functional, structural, and effective connectivity analysis.
 > _n.b. technically the effective connectivity analysis is also functional_
 
-##### Functional analysis
+### Functional analysis
 > The functional analysis assumes that [fMRIPrep](https://github.com/nipreps/fmriprep) has already been run. Before running the following scripts, ensure that the path to the project directory `proj_dir` is correctly set in those scripts and that the output folder `derivatives` has been generated from fMRIPrep with its adequate content.
 
 To perform several preprocessing steps (denoising, filtering, global signal regression, scrubbing, etc.), and the first-level SPM analysis; from the HPC cluster run the following PBS script
@@ -67,7 +67,7 @@ The second-level SPM analysis is performed by running the following command:
 Here, the arguments indicate to discard subjects with less than 2 minutes of data after scrubbing was performed, use the 8mm spatially smoothed data (need to be preprocessed accordingly above) and to use a FDR corrected p-value threshold of 0.05.
 
 
-##### Structural analysis
+### Structural analysis
 
 The structural connectivity analysis starts by running the [QSIPrep](https://github.com/PennLINC/qsiprep) pipeline to preprocess DWI and perform tractography.
 This is performed in the HPC cluster through the following script:
@@ -93,7 +93,7 @@ and finally run the voxel-wise analysis that extract the GFA using specific path
     voxelwise_diffusion_analysis.py --compute_tdi --plot_tdi_distrib --plot_figs
 
 
-##### Effective connectivity analysis
+### Effective connectivity analysis
 
 > The effective connectivity analysis uses DCM, which is part of SPM12 bundle and runs on MATLAB. It is located in the `dcm` folder.
 
@@ -118,14 +118,14 @@ This effectively probes which connectivity changes are most likely to induce the
 
 
 
-### Code structure
+## Code structure
 
 
 This is a quick description of each module, for more details, refers to the docstrings within each file.
 
 > Note: each *_analysis.py script can be run individually with a set of default parameters.
 
-##### Main modules
+### Main modules
 
 &ensp;&ensp;&ensp;&ensp; **seed_to_voxel_analysis.py**: Main script for the functional analysis. It prepare files for SPM and also performs _first_ and _second_ level analysis in nilearn. The _second level_ routine is performed in 2 phases: 1) extract within-group masks and join them to create _first-level_ mask; 2) re-do _second-level_ using this _first level_ mask. It displays cluster table statistics and color-coded brain maps of difference between groups.
 
@@ -135,7 +135,7 @@ This is a quick description of each module, for more details, refers to the docs
 
   &ensp;&ensp;&ensp;&ensp; **ybocs_analysis.py**: Script for assessing the association of functional, structural and effective connectivity measures to clinical severity scores.
 
-##### Old (deprecated) modules
+### Old (deprecated) modules
 
 &ensp;&ensp;&ensp;&ensp; **qsiprep_analysis.py:** Analysis of structural connectivity matrices, resulting from running QSIPrep. Most of this module was written in an earlier part of the project when analysis structural connectomes, but it includes several functions that are used in other modules.
 
@@ -146,7 +146,7 @@ This is a quick description of each module, for more details, refers to the docs
 &ensp;&ensp;&ensp;&ensp; **GSP_analysis.py**: Graph Signal Processing analysis of SC-FC coupling, interesting but not pursued.
 
 
-##### Utilities
+### Utilities
 
 &ensp;&ensp;&ensp;&ensp; **atlas_extraction.py:** Create FC matrices from preprocessed BOLD signals and brain atlases.
 
