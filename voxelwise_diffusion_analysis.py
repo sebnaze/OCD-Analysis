@@ -261,6 +261,34 @@ def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
     plt.close()
 
 
+def create_atlas_from_VOIs():
+    """ create and export new atlas based on VOIs from seed-to-voxel analysis """\
+    voi_loc = {'AccR':[9,9,-8], 'dPutR':[28,1,3], 'vPutL':[-20,12,-3],
+           'lvPFC':[23.5, 57.5, -6.5], 'lPFC':[53.5, 13.5, 19.5], 'dPFC':[-24.5, 55.5, 35.5]}
+
+    voi_radius = 6 #mm
+    dPFC_radius = 12
+    mask = None
+    i = 1
+    for voi,loc in voi_loc.items():
+        if voi=='dPFC':
+            img = nltools.create_sphere(loc, radius=dPFC_radius)
+        else:
+            img = nltools.create_sphere(loc, radius=voi_radius)
+        if mask == None:
+            mask = img
+        else:
+            img = new_img_like(img, img.get_fdata()*i)
+            mask = nilearn.image.math_img("img1 + img2", img1=mask, img2=img)
+        i += 1
+
+    # saving
+    fname = os.path.join(proj_dir, 'utils', '_'.join(list(voi_loc.keys()))+'_sphere{}-{}mm.nii.gz'.format(str(int(voi_radius)), str(int(dPFC_radius))))
+    nib.save(mask, fname)
+
+    # exporting to .mif for use in MrTrix3
+    cmd = "/home/davidS/mrtrix3/bin/mrconvert {} {}".format(fname, fname[:-7]+'.mif')
+    os.system(cmd)
 
 if __name__=='__main__':
 

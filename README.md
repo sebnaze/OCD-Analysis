@@ -7,16 +7,16 @@ Structural and Functional Neuroimaging analysis of OCD baseline data in view of 
 
 Table of contents
 -----------------
-* [Installation](#installation)
+* [Installation](#installation) 
 * [Usage](#usage)
   - [Workflow](#workflow)
-    + [Functional analysis](#functional analysis)
-    + [Structural analysis](#structural analysis)
-    + [Effective connectivity](#effective connectivity)
-  - [Code structure](#code)
-* [Known issues and limitations](#known-issues-and-limitations)
-* [Getting help](#getting-help)
-* [Contributing](#contributing)
+    + [Functional analysis](#functional-analysis)
+    + [Structural analysis](#structural-analysis)
+    + [Effective connectivity](#effective-connectivity)
+  - [Code structure](#code-structure)
+    + [Main modules](#main-modules)
+    + [Old (deprecated) modules](#old-deprecated-modules)
+    + [Utility](#utility)
 * [License](#license)
 * [Authors and history](#authors-and-history)
 * [Acknowledgments](#acknowledgments)
@@ -39,10 +39,10 @@ Then from the root of this source repository (where the `setup.py` is located), 
 Usage
 -----
 
-[Workflow](#workflow) provides an overall walkthrough of each of the 3 analysis ([functional](#functional analysis), [structural](#structural analysis) and [effective](#effective analysis)) to reproduce the results of the study.
+[Workflow](#workflow) provides an overall walkthrough of each of the 3 analysis ([functional](#functional-analysis), [structural](#structural-analysis) and [effective](#effective-analysis)) to reproduce the results of the study.
 
 
-[Code structure](#code structure) provides a more specific description of each module.
+[Code structure](#code-structure) provides a more specific description of each module.
 
 For more details about each module, refer to each file separately.
 
@@ -77,7 +77,8 @@ This is performed in the HPC cluster through the following script:
 The parameters used for DWI preprocessing and the tractography algorithm can be found in `preprocessing/qsiprep_recon_file_100M_seeds.json`.
 
 For each subject, this creates 100 millions streamlines and connectivity matrices following some established atlases. However, we now want to focus on the structural connectivity between the volumes of interests (cluster or seed VOIs) involved in the functional analysis. This implies creating a new parcellation (or brain atlas) from those VOIs.
-> _#TODO:_ explain how to create atlas from VOIs
+> Currently such atlas is created manually by calling `voxelwise_diffusion_analysis.create_atlas_from_VOIs()` from an interactive python console or jupyter notebook
+
 
 and generating a connectivity matrix from this new atlas:
 
@@ -116,20 +117,54 @@ Finally, we create a large number of models spanning several connectivity profil
 This effectively probes which connectivity changes are most likely to induce the effects observed between are two groups (controls vs patients), using Bayesian Model Averaging. The results are exposed through the matlab GUI.
 
 
-#### Code structure
 
-The analysis contains structural, functional and structure-function analysis, with their relation to behavioral measures (mainly Y-BOCS score) when possible.
+### Code structure
+
+
+This is a quick description of each module, for more details, refers to the docstrings within each file.
 
 > Note: each *_analysis.py script can be run individually with a set of default parameters.
 
-**qsiprep_analysis.py:** Analysis of structural connectivity matrices, outputed from QSIPrep. Includes several functions that are used in other modules.
+##### Main modules
 
-**fc_analysis.py:** Analysis of functional outputs from FMRIPrep and postprocessing from Luke.
+&ensp;&ensp;&ensp;&ensp; **seed_to_voxel_analysis.py**: Main script for the functional analysis. It prepare files for SPM and also performs _first_ and _second_ level analysis in nilearn. The _second level_ routine is performed in 2 phases: 1) extract within-group masks and join them to create _first-level_ mask; 2) re-do _second-level_ using this _first level_ mask. It displays cluster table statistics and color-coded brain maps of difference between groups.
 
-**scfc_analysis.py:** Analysis of structure-function coupling and relation to Y-BOCS score.
 
-**GSP_analysis.py**: Graph Signal Processing analysis of SC-FC coupling, interesting but on hold.
+&ensp;&ensp;&ensp;&ensp; **voxelwise_diffusion_analysis.py**: Main script for the structural analysis. It extracts masks of high track density voxels for each pathway of interest and each subject, and computes the average generalized fractional anisotropy (GFA) within these masks. It displays violin, strip and box plots of the distribution of GFA for patients and controls in each pathway.
 
-**atlas_extraction.py:** Create FC matrices from preprocessed BOLD signals and brain atlases.
 
-**atlaser.py:** Utility module for handling atlases, ROI indexing, create subatlases, etc.
+  &ensp;&ensp;&ensp;&ensp; **ybocs_analysis.py**: Script for assessing the association of functional, structural and effective connectivity measures to clinical severity scores.
+
+##### Old (deprecated) modules
+
+&ensp;&ensp;&ensp;&ensp; **qsiprep_analysis.py:** Analysis of structural connectivity matrices, resulting from running QSIPrep. Most of this module was written in an earlier part of the project when analysis structural connectomes, but it includes several functions that are used in other modules.
+
+&ensp;&ensp;&ensp;&ensp; **fc_analysis.py:** Analysis of functional outputs from FMRIPrep. This was also assessing differences in functional connectivity matrices, which was abandoned to the profit of SPM and seed-to-voxel analysis.
+
+&ensp;&ensp;&ensp;&ensp; **scfc_analysis.py:** Analysis of structure-function coupling and relation to Y-BOCS score.
+
+&ensp;&ensp;&ensp;&ensp; **GSP_analysis.py**: Graph Signal Processing analysis of SC-FC coupling, interesting but not pursued.
+
+
+##### Utilities
+
+&ensp;&ensp;&ensp;&ensp; **atlas_extraction.py:** Create FC matrices from preprocessed BOLD signals and brain atlases.
+
+&ensp;&ensp;&ensp;&ensp; **atlaser.py:** Utility module for handling atlases, ROI indexing, create subatlases, etc.
+
+Licence
+-------
+
+This work is licensed under a Creative Commons Attribution 4.0 International License.
+
+
+Authors and history
+-------------------
+
+This code was contributed by Sebastien Naze for QIMR Berghofer in 2021-2022.
+
+
+Acknowledgments
+---------------
+
+Grant number #
