@@ -96,6 +96,9 @@ and finally run the voxel-wise analysis that extract the GFA using specific path
 
     voxelwise_diffusion_analysis.py --compute_tdi --plot_tdi_distrib --plot_figs
 
+The output of the script should look like this:
+
+![voxelwise_structural_analysis](screenshots/voxelwise_structural_analysis.001.jpeg)
 
 ### Effective connectivity analysis
 
@@ -120,7 +123,9 @@ Finally, we create a large number of models spanning several connectivity profil
 
 This effectively probes which connectivity changes are most likely to induce the effects observed between are two groups (controls vs patients), using Bayesian Model Averaging. The results are exposed through the matlab GUI.
 
+The PEB review window showing the results should look like this:
 
+![dcm](screenshots/dcm.001.jpeg)
 
 ## Code structure
 
