@@ -66,6 +66,10 @@ The second-level SPM analysis is performed by running the following command:
 
 Here, the arguments indicate to discard subjects with less than 2 minutes of data after scrubbing was performed, use the 8mm spatially smoothed data (need to be preprocessed accordingly above) and to use a FDR corrected p-value threshold of 0.05.
 
+The output of the script should look like this (only shown for one pathway):
+
+![seed_to_voxel_analysis](screenshots/seed_to_voxel_analysis.001.jpeg)
+
 
 ### Structural analysis
 
