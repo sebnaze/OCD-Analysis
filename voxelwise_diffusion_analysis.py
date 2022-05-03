@@ -193,7 +193,7 @@ def compute_stats(thresholds, args):
     stats = dict()
     for dsm,scm,roi,subroi,thr in itertools.product(dsi_metrics, sc_metrics, rois, subrois, thresholds):
         t,p = scipy.stats.ttest_ind(np.array(dsi_m[dsm,scm,roi,subroi,thr, 'controls']['mean_dsi']), np.array(dsi_m[dsm,scm,roi,subroi,thr, 'patients']['mean_dsi']))
-        print("{} {} {} {} - t={:.3f} p={:.3f}".format(dsm,scm,roi,subroi,thr,t,p))
+        print("{} {} {} {} -- thr={} -- t={:.3f} p={:.3f}".format(dsm,scm,roi,subroi,int(thr),t,p))
         stats[dsm,scm,roi,subroi,thr] = {'t':t, 'p':p}
     if args.save_outputs:
         with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_stats_dict.pkl'), 'wb') as f:
@@ -262,7 +262,7 @@ def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
 
 
 def create_atlas_from_VOIs():
-    """ create and export new atlas based on VOIs from seed-to-voxel analysis """\
+    """ create and export new atlas based on VOIs from seed-to-voxel analysis """
     voi_loc = {'AccR':[9,9,-8], 'dPutR':[28,1,3], 'vPutL':[-20,12,-3],
            'lvPFC':[23.5, 57.5, -6.5], 'lPFC':[53.5, 13.5, 19.5], 'dPFC':[-24.5, 55.5, 35.5]}
 
