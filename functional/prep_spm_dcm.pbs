@@ -43,7 +43,7 @@ python ${proj_dir}docs/code/preprocessing/post_fmriprep_denoising.py ${subj}
 #gzip -d ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/*
 
 echo 'Preparing '$subj' for SPM / seed-to-voxel analysis'
-python ${proj_dir}docs/code/seed_to_voxel_analysis.py --subj $subj --compute_seed_corr --unzip_corr_maps --merge_LR_hemis --n_jobs 1 --brain_smoothing_fwhm 8 --prep_fsl_randomise
+python ${proj_dir}docs/code/functional/seed_to_voxel_analysis.py --subj $subj --compute_seed_corr --unzip_corr_maps --merge_LR_hemis --n_jobs 1 --brain_smoothing_fwhm 8 --prep_fsl_randomise
 
 
 #mkdir -p ${pp_dir}${subj}/spm/scans/

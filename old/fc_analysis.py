@@ -34,9 +34,9 @@ code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
 
-sys.path.insert(0, os.path.join(code_dir))
-import qsiprep_analysis
-import ttest_ind_FWE
+#sys.path.insert(0, os.path.join(code_dir))
+from ..old import qsiprep_analysis
+from ..utils import ttest_ind_FWE
 
 atlas_cfg_path = os.path.join(atlas_dir, 'atlas_config.json')
 with open(atlas_cfg_path) as jsf:

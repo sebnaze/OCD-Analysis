@@ -1,0 +1,55 @@
+#!/bin/bash
+
+##########################################################################
+#
+#  Script:    create_connectome_from_atlas.pbs
+#  Author:    Sebastien Naze
+#  Created:   2022-04
+#
+##########################################################################
+
+#PBS -N create_connectome_from_atlas.pbs
+#PBS -l ncpus=16,mem=24gb,walltime=4:00:00
+#PBS -m abe
+#PBS -M sebastien.naze@qimrberghofer.edu.au
+#PBS -o /working/lab_lucac/sebastiN/projects/OCDbaseline/.pbs_logs/
+#PBS -e /working/lab_lucac/sebastiN/projects/OCDbaseline/.pbs_logs/
+
+module load mrtrix3/3.0_RC3
+
+proj_dir=/mnt/lustre/working/lab_lucac/sebastiN/projects/OCDbaseline/
+
+# load specific subject from subject list
+mapfile -t subj_array < ${proj_dir}docs/code/subject_list_all.txt
+IDX=$((PBS_ARRAY_INDEX-1))  # double parenthesis needed for arithmetic operations
+subj=${subj_array[$IDX]}
+echo "Current subject: " ${subj}
+
+dwi_dir=${proj_dir}data/derivatives/qsirecon/${subj}/dwi/
+
+in_dir=${proj_dir}data/scratch/qsiprep/qsirecon_wf/${subj}_mrtrix_multishell_msmt_version2020/recon_wf/
+foldr=_dwi_file_..sngl..out..qsiprep..${subj}..dwi..${subj}_acq-88_dir-AP_space-T1w_desc-preproc_dwi.nii.gz/
+out_dir=${proj_dir}postprocessing/${subj}/
+
+tck_file=${dwi_dir}${subj}_acq-88_dir-AP_space-T1w_desc-preproc_space-T1w_desc-tracks_ifod2_dhollander.tck
+weights_file=${in_dir}track_ifod2_dhollander/${foldr}tck_sift2/${subj}_acq-88_dir-AP_space-T1w_desc-preproc_dwi_wm_mtnorm_weights.csv
+
+mkdir -p ${out_dir}
+
+declare -a atlases=("AccR_dPutR_vPutL_lvPFC_lPFC_dPFC_sphere6-12mm") 
+
+for atlas in "${atlases[@]}"
+do
+    echo ${subj} ${atlas}
+
+    atlas_file=${proj_dir}utils/${atlas}.mif
+
+    #tck2connectome -nthreads 32 -assignment_radial_search 2.0 -stat_edge sum -symmetric ${tck_file} ${atlas_file} ${out_dir}${subj}_${atlas}_count_no_sift_connectome.csv
+    tck2connectome -nthreads 32 -out_assignments ${out_dir}${atlas}_assignments.txt -assignment_radial_search 2.0 -stat_edge sum -symmetric ${tck_file} ${atlas_file} ${out_dir}${subj}_${atlas}_count_nosift_connectome.csv -force
+
+    tck2connectome -nthreads 32 -tck_weights_in ${weights_file} -assignment_radial_search 2.0 -stat_edge sum -symmetric ${tck_file} ${atlas_file} ${out_dir}${subj}_${atlas}_count_sift_connectome.csv -force
+
+    connectome2tck -nthreads 32 ${tck_file} ${out_dir}${atlas}_assignments.txt ${out_dir}${atlas}_nosift_ -keep_self -force
+
+    connectome2tck -nthreads 32 ${tck_file} ${out_dir}${atlas}_assignments.txt ${out_dir}${atlas}_sift_ -keep_self -tck_weights_in ${weights_file} -force
+done

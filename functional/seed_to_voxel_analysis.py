@@ -7,6 +7,7 @@ import bct
 import glob
 import gzip
 import h5py
+import importlib
 import itertools
 import joblib
 from joblib import Parallel, delayed
@@ -34,6 +35,7 @@ from scipy import ndimage
 import shutil
 import statsmodels
 from statsmodels.stats import multitest
+import sys
 import time
 from time import time
 import platform
@@ -56,15 +58,17 @@ code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 lukeH_deriv_dir = os.path.join(lukeH_proj_dir, 'data/derivatives')
 atlas_dir = working_dir+'lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
-#in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed/detrend_gsr_filtered')
-#in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/unscrubbed_seed_not_smoothed/detrend_gsr_filtered')
 
 # This section should be replaced with propper packaging one day
-import sys
-sys.path.insert(0, os.path.join(code_dir))
-import importlib
-import qsiprep_analysis
-import atlaser
+#sys.path.insert(0, os.path.join(code_dir, old))
+#sys.path.insert(0, os.path.join(code_dir, utils))
+#import qsiprep_analysis
+#import atlaser
+
+# there you go:
+from ..old import qsiprep_analysis
+from ..utils import atlaser
+
 from atlaser import Atlaser
 
 atlas_cfg_path = os.path.join(atlas_dir, 'atlas_config.json')
