@@ -4,6 +4,7 @@
 
 import argparse
 import bct
+import datetime
 import h5py
 import itertools
 import joblib
@@ -188,12 +189,15 @@ def cohen_d(x,y):
     dof = nx + ny - 2
     return (np.mean(x) - np.mean(y)) / np.sqrt(((nx-1)*np.std(x, ddof=1) ** 2 + (ny-1)*np.std(y, ddof=1) ** 2) / dof)
 
-def compute_stats(thresholds, args):
+def compute_stats(dsi_m, thresholds, args):
     """ performs student's t-test between groups' mean TDI in pathways """
     stats = dict()
     for dsm,scm,roi,subroi,thr in itertools.product(dsi_metrics, sc_metrics, rois, subrois, thresholds):
-        t,p = scipy.stats.ttest_ind(np.array(dsi_m[dsm,scm,roi,subroi,thr, 'controls']['mean_dsi']), np.array(dsi_m[dsm,scm,roi,subroi,thr, 'patients']['mean_dsi']))
-        print("{} {} {} {} -- thr={} -- t={:.3f} p={:.3f}".format(dsm,scm,roi,subroi,int(thr),t,p))
+        cons = np.array(dsi_m[dsm,scm,roi,subroi,thr, 'controls']['mean_dsi'])
+        pats = np.array(dsi_m[dsm,scm,roi,subroi,thr, 'patients']['mean_dsi'])
+        t,p = scipy.stats.ttest_ind(cons, pats)
+        ks,pks = scipy.stats.ks_2samp(cons, pats)
+        print("{} {} {} {} -- thr={} -- t={:.3f} p={:.3f} -- ks={:.2f} p={:.3f}".format(dsm,scm,roi,subroi,int(thr),t,p,ks,pks))
         stats[dsm,scm,roi,subroi,thr] = {'t':t, 'p':p}
     if args.save_outputs:
         with open(os.path.join(proj_dir, 'postprocessing', 'tdi_fa_stats_dict.pkl'), 'wb') as f:
@@ -253,7 +257,7 @@ def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
     fig.tight_layout()
 
     if args.save_figs:
-        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_3pathways_'+str(thr)+'.svg'))
+        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_3pathways_'+str(thr)+'_05-05-2022.svg'))
 
     if args.plot_figs:
         plt.show(block=False)
@@ -290,6 +294,72 @@ def create_atlas_from_VOIs():
     cmd = "/home/davidS/mrtrix3/bin/mrconvert {} {}".format(fname, fname[:-7]+'.mif')
     os.system(cmd)
 
+
+
+def create_df_streamline(seeds=['Acc', 'dPut', 'vPut'], vois = ['OFC', 'lPFC', 'dPFC'], args=None):
+    """ get number of streamlines between ROIs from csv file for each subject and put in dataframe"""
+    regions = np.hstack([seeds,vois])
+    df_lines = []
+    for subj in subjs:
+        if 'control' in subj:
+            coh = 'controls'
+        else:
+            coh = 'patients'
+
+        fname = os.path.join(proj_dir, 'postprocessing', subj, subj+'_AccR_dPutR_vPutL_lvPFC_lPFC_dPFC_sphere6-12mm_count_nosift_connectome.csv')
+        #fname = os.path.join(proj_dir, 'postprocessing', 'sub-control01', 'sub-control01_AccR_dPutR_vPutL_lvPFC_lPFC_dPFC_sphere6-12mm_count_nosift_connectome.csv')
+        if os.path.exists(fname):
+            df = pd.read_csv(fname, sep=' ', names=regions)
+            df.index = regions
+        else:
+            print(subj+' discarded, no streamline count file.')
+            continue
+
+        for seed,voi in zip(seeds,vois):
+            df_lines.append({'subj':subj, 'pathway':seed+voi, 'count':df[seed][voi], 'cohort':coh})
+
+    df_streamlines = pd.DataFrame(df_lines)
+    return df_streamlines
+
+def plot_streamline_counts(df_streamlines, seeds=['Acc', 'dPut', 'vPut'], vois = ['OFC', 'lPFC', 'dPFC'], args=None):
+    """ plot distribution of streamline count in each pathway """
+    colors = ['lightgray', 'darkgray']
+    plt.figure(figsize=[8,10])
+    plt.rcParams.update({'font.size':14, 'axes.linewidth':1, 'pdf.fonttype':42})
+
+    for i, (seed,voi) in enumerate(zip(seeds,vois)):
+        ax = plt.subplot(2,3,i+1)
+        sbn.violinplot(data=df_streamlines[df_streamlines['pathway']==seed+voi], y='count', x='pathway', hue='cohort', \
+                    split=True, dodge=False, linewidth=0, palette=colors, cut=2)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(width=1)
+        plt.ylabel('streamline count');
+
+        if i==len(seeds)-1:
+            plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+        else:
+            ax.get_legend().remove()
+
+        ax = plt.subplot(2,3,3+i+1)
+        sbn.boxplot(data=df_streamlines[df_streamlines['pathway']==seed+voi], y='count', x='pathway', hue='cohort', \
+                    linewidth=1, palette=colors)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(width=1)
+        plt.ylabel('streamline count');
+
+        if i==len(seeds)-1:
+            plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+        else:
+            ax.get_legend().remove()
+    plt.tight_layout()
+
+    if args.save_figs:
+        fname = 'streamline_count_'+datetime.datetime.now().strftime("%Y%m%d")+'.pdf'
+        plt.savefig(os.path.join(proj_dir, 'img', fname), transparent=True)
+
+
 if __name__=='__main__':
 
     parser = argparse.ArgumentParser()
@@ -302,6 +372,8 @@ if __name__=='__main__':
     parser.add_argument('--compute_tdi', default=False, action='store_true', help='flag to compute track density maps, if not switched it tries to load them')
     parser.add_argument('--plot_tdi_distrib', default=False, action='store_true', help='Plot difference in track density distributions (violin, strip, box plots)')
     parser.add_argument('--group_mask_threshold', type=float, default=0.5, action='store', help="threshold used to create group mask in pathway when no streamlines available")
+    parser.add_argument('--compute_stats', default=False, action='store_true', help="compute and print stats of structural differences")
+    parser.add_argument('--plot_streamline_counts', default=False, action='store_true', help="get streamline counts from connectomes csv files and plot distributions")
     args = parser.parse_args()
 
     # parameters
@@ -318,19 +390,20 @@ if __name__=='__main__':
         with open(os.path.join(proj_dir, 'postprocessing', 'dsi_m.pkl'), 'rb') as f:
             dsi_m = pickle.load(f)
 
-    compute_stats(thresholds, args)
+    if args.compute_stats:
+        compute_stats(dsi_m, thresholds, args)
 
-    # Effect size
-    df_dsi = create_df_dsi(dsi_m, tdi_threshold_to_plot)
-    for subroi in subrois:
-      print(subroi)
-      cons = df_dsi[(df_dsi['cohorts']=='controls') & (df_dsi['subroi']==subroi)].mean_dsi
-      pats = df_dsi[(df_dsi['cohorts']=='patients') & (df_dsi['subroi']==subroi)].mean_dsi
-      print('Controls: mean={:.5f} std={:.5f} n={}'.format(cons.mean(), cons.std(), str(len(cons))))
-      print('Patients: mean={:.5f} std={:.5f} n={}'.format(pats.mean(), pats.std(), str(len(pats))))
-      print('cohen\'s d at threshold {} = {:.2f}'.format(str(tdi_threshold_to_plot), cohen_d(cons, pats)))
+        # Effect size
+        df_dsi = create_df_dsi(dsi_m, tdi_threshold_to_plot)
+        for subroi in subrois:
+          print(subroi)
+          cons = df_dsi[(df_dsi['cohorts']=='controls') & (df_dsi['subroi']==subroi)].mean_dsi
+          pats = df_dsi[(df_dsi['cohorts']=='patients') & (df_dsi['subroi']==subroi)].mean_dsi
+          print('Controls: mean={:.5f} std={:.5f} n={}'.format(cons.mean(), cons.std(), str(len(cons))))
+          print('Patients: mean={:.5f} std={:.5f} n={}'.format(pats.mean(), pats.std(), str(len(pats))))
+          print('cohen\'s d at threshold {} = {:.2f}'.format(str(tdi_threshold_to_plot), cohen_d(cons, pats)))
 
-    create_summary(dsi_m, args)
+        create_summary(dsi_m, args)
 
     #avg_mask = plot_group_masks(dsi_m, thresholds, args)
 
@@ -341,8 +414,9 @@ if __name__=='__main__':
         with open(os.path.join(proj_dir, 'postprocessing', 'dsi_m.pkl'), 'wb') as f:
             pickle.dump(dsi_m, f)
 
-
-
+    if args.plot_streamline_counts:
+        df_streamlines = create_df_streamline(args=args)
+        plot_streamline_counts(df_streamlines, args=args)
 
 
 

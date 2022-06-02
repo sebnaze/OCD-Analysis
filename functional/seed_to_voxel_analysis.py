@@ -4,6 +4,7 @@
 
 import argparse
 import bct
+import datetime
 import glob
 import gzip
 import h5py
@@ -29,9 +30,11 @@ import numpy as np
 import os
 import pickle
 import pandas as pd
+import pdb
 import scipy
 from scipy.io import loadmat
 from scipy import ndimage
+import seaborn as sbn
 import shutil
 import statsmodels
 from statsmodels.stats import multitest
@@ -60,14 +63,17 @@ lukeH_deriv_dir = os.path.join(lukeH_proj_dir, 'data/derivatives')
 atlas_dir = working_dir+'lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
 
 # This section should be replaced with propper packaging one day
-#sys.path.insert(0, os.path.join(code_dir, old))
-#sys.path.insert(0, os.path.join(code_dir, utils))
-#import qsiprep_analysis
-#import atlaser
+sys.path.insert(0, os.path.join(code_dir, 'old'))
+sys.path.insert(0, os.path.join(code_dir, 'utils'))
+sys.path.insert(0, os.path.join(code_dir, 'structural'))
+import qsiprep_analysis
+import atlaser
+from voxelwise_diffusion_analysis import cohen_d
 
 # there you go:
-from ..old import qsiprep_analysis
-from ..utils import atlaser
+#from ..old import qsiprep_analysis
+#from ..utils import atlaser
+#from ..structural.voxelwise_diffusion_analysis import cohen_d
 
 from atlaser import Atlaser
 
@@ -375,7 +381,8 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     contrasts['between'] = glm.compute_contrast(np.array([1, -1]), output_type='all')
     print('within groups and between group contrasts took {:.2f}, {:.2f} and {:.2f}s'.format(t1-t0, t2-t1, time()-t2))
     n_voxels = np.sum(nilearn.image.get_data(glm.masker_.mask_img_))
-    return contrasts, n_voxels
+    params = glm.get_params()
+    return contrasts, n_voxels, params
 
 def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_threshold=10):
     """ cluster threshold contrast at alpha with height_control method for multiple comparisons """
@@ -407,7 +414,8 @@ def run_second_level(subjs, metrics, subrois, args):
         glm_results[subroi] = dict()
 
         t_fp = time()
-        glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args)
+        contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args)
+        glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels'], glm_results[subroi]['first_pass','params'] = contrasts, n_voxels, params
         print('{} first pass in {:.2f}s'.format(subroi,time()-t_fp))
 
         t_wmask = time()
@@ -415,7 +423,8 @@ def run_second_level(subjs, metrics, subrois, args):
         print('created within groups mask in {:.2f}s'.format(time()-t_wmask))
 
         t_sp = time()
-        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels']  = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[within_group_mask])
+        contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[within_group_mask])
+        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels'], glm_results[subroi]['second_pass','params'] = contrasts, n_voxels, params
         print('{} second pass in {:.2f}s'.format(subroi,time()-t_sp))
 
         # Correcting the p-values for multiple testing and taking negative logarithm
@@ -425,37 +434,40 @@ def run_second_level(subjs, metrics, subrois, args):
         #glm_results[subroi]['neg_log_pval'] = neg_log_pval
 
         t_thr = time()
-        glm_results[subroi][('fpr',0.001,'thresholded_img')], \
-            glm_results[subroi][('fpr',0.001,'thresh')], \
-            glm_results[subroi][('fpr',0.001,'cluster_table')] = threshold_contrast( \
-                            glm_results[subroi]['second_pass','contrasts']['between']['z_score'])
+        for pss in ['first_pass', 'second_pass']:
+            glm_results[subroi][(pss,'fpr',0.001,'thresholded_img')], \
+                glm_results[subroi][(pss,'fpr',0.001,'thresh')], \
+                glm_results[subroi][(pss,'fpr',0.001,'cluster_table')] = threshold_contrast( \
+                                glm_results[subroi][pss,'contrasts']['between']['z_score'])
 
-        print('Clusters at p<0.001 uncorrected:')
-        print(glm_results[subroi][('fpr',0.001,'cluster_table')])
+            print(' '.join([subroi,pss,'clusters at p<0.001 uncorrected:']))
+            print(glm_results[subroi][(pss,'fpr',0.001,'cluster_table')])
 
-        glm_results[subroi][('fdr',args.fdr_threshold,'thresholded_img')], \
-            glm_results[subroi][('fdr',args.fdr_threshold,'thresh')], \
-            glm_results[subroi][('fdr',args.fdr_threshold,'cluster_table')] = threshold_contrast( \
-                            glm_results[subroi]['second_pass','contrasts']['between']['z_score'], height_control='fdr', alpha=args.fdr_threshold)
+            glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresholded_img')], \
+                glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresh')], \
+                glm_results[subroi][(pss,'fdr',args.fdr_threshold,'cluster_table')] = threshold_contrast( \
+                                glm_results[subroi][pss,'contrasts']['between']['z_score'], height_control='fdr', alpha=args.fdr_threshold)
 
-        print('Clusters at p<{:.2f} FDR corrected:'.format(args.fdr_threshold))
-        print(glm_results[subroi][('fdr',args.fdr_threshold,'cluster_table')])
+            print(' '.join([subroi,pss,'clusters at p<{:.2f} FDR corrected:'.format(args.fdr_threshold)]))
+            print(glm_results[subroi][(pss,'fdr',args.fdr_threshold,'cluster_table')])
 
         print('Thresholding and clustering took {:.2f}s'.format(time()-t_thr))
 
         if args.plot_figs:
             t_plt = time()
-            fig = plt.figure(figsize=[16,4])
-            ax1 = plt.subplot(1,2,1)
-            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
-                            axes=ax1, title=subroi+'_contrast_fpr0001')
-            ax2 = plt.subplot(1,2,2)
-            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fdr',args.fdr_threshold,'thresh')],
-                            axes=ax2, title=subroi+'_contrast_fdr{:03d}'.format(int(args.fdr_threshold*100)))
-            print('{} plotting took {:.2f}s'.format(subroi,time()-t_plt))
-        if args.save_figs:
-            plot_stat_map(glm_results[subroi]['second_pass','contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][('fpr',0.001,'thresh')],
-            output_file=os.path.join(args.out_dir,subroi+'_contrast_fpr0001.pdf'))
+            for pss in ['first_pass', 'second_pass']:
+                fig = plt.figure(figsize=[16,4])
+                ax1 = plt.subplot(1,2,1)
+                plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',0.001,'thresh')],
+                                axes=ax1, title='_'.join([pss,subroi,'contrast_fpr0001']))
+                ax2 = plt.subplot(1,2,2)
+                plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresh')],
+                                axes=ax2, title='_'.join([pss,subroi,'contrast_fdr{:03d}'.format(int(args.fdr_threshold*100))]))
+                print('{} plotting took {:.2f}s'.format(subroi,time()-t_plt))
+
+                if args.save_figs:
+                    plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',0.001,'thresh')],
+                    output_file=os.path.join(args.out_dir,subroi+'_'+pss+'_contrast_fpr0001.pdf'))
 
         print('Finished 2nd level analysis for '+subroi+' ROI in {:.2f}s'.format(time()-t0))
 
@@ -468,10 +480,93 @@ def run_second_level(subjs, metrics, subrois, args):
             suffix += '_fsptMask'
         if args.use_cortical_mask:
             suffix += '_corticalMask'
-        with open(os.path.join(args.out_dir,'glm_results'+suffix+'.pkl'), 'wb') as of:
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        suffix += '_'+today
+        with gzip.open(os.path.join(args.out_dir,'glm_results'+suffix+'.pkl.gz'), 'wb') as of:
             pickle.dump(glm_results, of)
 
     return glm_results
+
+
+def compute_voi_corr(subjs, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
+    """ compute correlation between seed and VOI for each pathway, to extract p-values, effect size, etc. """
+    dfs = []
+    fwhm = 'brainFWHM{}mm'.format(int(args.brain_smoothing_fwhm))
+    for atlas,metric in itertools.product(args.atlases, args.metrics):
+        for subj in subjs:
+            if 'control' in subj:
+                cohort = 'controls'
+            else:
+                cohort = 'patients'
+            for seed,voi in zip(seeds, vois):
+                # load correlation map
+                fname = '_'.join([subj, metric, fwhm, atlas, seed, 'ns_sphere_seed_to_voxel_corr.nii'])
+                corr_map = load_img(os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed',
+                                    metric, fwhm, seed, cohort, fname))
+                # load voi mask
+                voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', subj, 'spm/masks', 'local_'+'_'.join([voi, metric])+'.nii'))
+                voi_mask = resample_to_img(voi_mask, corr_map, interpolation='nearest')
+
+                # extract correlations
+                voi_corr = corr_map.get_fdata().copy() * voi_mask.get_fdata().copy()
+                avg_corr = np.mean(voi_corr[voi_corr!=0])
+                df_line = {'subj':subj, 'metric':metric, 'atlas':atlas, 'fwhm':fwhm, 'cohort':cohort, 'pathway':'_'.join([seed,voi]), 'corr':avg_corr}
+                dfs.append(df_line)
+    df_voi_corr = pd.DataFrame(dfs)
+    return df_voi_corr
+
+
+def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
+    """ violinplots of FC in pahtways """
+    colors = ['lightgrey', 'darkgrey']
+    sbn.set_palette(colors)
+    plt.rcParams.update({'font.size': 20, 'axes.linewidth':2})
+    ylim = [-0.15, 0.3]
+    fig = plt.figure(figsize=[12,6])
+    df_voi_corr['corr'] = df_voi_corr['corr'] / 880.
+    df_voi_corr['corr'].loc[df_voi_corr['corr']>1] = 1
+    df_voi_corr['corr'].loc[df_voi_corr['corr']<-1] = -1
+    #plt.subplot(1,2,1)
+    #sbn.violinplot(data=df_voi_corr, y='corr', x='pathway', hue='cohort', orient='v', split=True, scale_hue=True,
+    #               inner='quartile', dodge=True, width=0.8, cut=0)
+    for i,(seed,voi) in enumerate(zip(seeds, vois)):
+      ax = plt.subplot(1,len(seeds),i+1)
+      sbn.barplot(data=df_voi_corr[df_voi_corr['pathway']=='_'.join([seed,voi])], y='corr', x='pathway', hue='cohort', orient='v')
+      ax.spines['top'].set_visible(False)
+      ax.spines['right'].set_visible(False)
+      ax.tick_params(width=2)
+      if i==len(seeds)-1:
+        plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+      else:
+        ax.get_legend().set_visible(False)
+      plt.tight_layout()
+
+    if args.save_figs:
+        figname = 'seed_to_voi_corr_voilinplot_3pathways.svg'
+        #plt.savefig(os.path.join(proj_dir, 'img', figname))
+        plt.savefig(os.path.join('/home/sebastin/tmp/', figname))
+
+
+def print_voi_stats(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
+    """ print seed to VOI stats """
+    print('Seed to VOI statistics:\n-------------------------')
+    for atlas,metric in itertools.product(args.atlases, args.metrics):
+        fwhm = 'brainFWHM{}mm'.format(int(args.brain_smoothing_fwhm))
+        out = dict()
+        for seed,voi in zip(seeds, vois):
+            key = '_'.join([seed, voi])
+            df_con = df_voi_corr.loc[ (df_voi_corr['cohort']=='controls')
+                                    & (df_voi_corr['atlas']==atlas)
+                                    & (df_voi_corr['metric']==metric)
+                                    & (df_voi_corr['pathway']==key) ]
+            df_pat = df_voi_corr.loc[ (df_voi_corr['cohort']=='patients')
+                                    & (df_voi_corr['atlas']==atlas)
+                                    & (df_voi_corr['metric']==metric)
+                                    & (df_voi_corr['pathway']==key) ]
+            t,p = scipy.stats.ttest_ind(df_con['corr'], df_pat['corr'])
+            d = cohen_d(df_con['corr'], df_pat['corr'])
+            print("{} {} {} {}   T={:.3f}   p={:.3f}   cohen's d={:.2f}".format(atlas,metric,fwhm,key,t,p,d))
+
 
 if __name__=='__main__':
 
@@ -494,6 +589,7 @@ if __name__=='__main__':
     parser.add_argument('--create_sphere_within_cluster', default=False, action='store_true', help='export sphere around peak within VOI cluster in prep for DCM analysis')
     parser.add_argument('--brain_smoothing_fwhm', default=8., type=none_or_float, action='store', help='brain smoothing FWHM (default 8mm as in Harrison 2009)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold")
+    parser.add_argument('--compute_voi_corr', default=False, action='store_true', help="compute seed to VOI correlation and print stats")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -505,7 +601,11 @@ if __name__=='__main__':
     atlases= ['Harrison2009'] #['schaefer100_tianS1', 'schaefer200_tianS2', 'schaefer400_tianS4'] #schaefer400_harrison2009
     #metrics = ['detrend_filtered', 'detrend_gsr_filtered']
     pre_metric = 'seed_not_smoothed' #'unscrubbed_seed_not_smoothed'
-    metrics = ['detrend_gsr_filtered_scrubFD06'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
+    metrics = ['detrend_gsr_filtered_scrubFD05'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
+
+    args.atlases = atlases
+    args.pre_metric = pre_metric
+    args.metrics = metrics
 
     #TODO: in_dir must be tailored to the atlas. ATM everything is put in Harrison2009 folder
     args.in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/', args.seed_type+'Rep', pre_metric)
@@ -544,3 +644,8 @@ if __name__=='__main__':
         os.makedirs(out_dir, exist_ok=True)
         args.out_dir = out_dir
         glm_results = run_second_level(subjs, metrics, subrois, args)
+
+    if args.compute_voi_corr:
+        df_voi_corr = compute_voi_corr(subjs, args=args)
+        print_voi_stats(df_voi_corr, args=args)
+        plot_voi_corr(df_voi_corr, args=args)

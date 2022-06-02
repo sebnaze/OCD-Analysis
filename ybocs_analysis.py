@@ -34,6 +34,8 @@ deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
 
 sys.path.insert(0, os.path.join(code_dir))
+sys.path.insert(0, os.path.join(code_dir, 'old'))
+sys.path.insert(0, os.path.join(code_dir, 'utils'))
 import qsiprep_analysis
 importlib.reload(qsiprep_analysis)
 import atlaser
@@ -101,7 +103,7 @@ def get_dcm_results():
     """ import pathway weigth from individual subjects DCMs """
     # store effective connectivity in a dataframe
 
-    f = h5py.File(os.path.join(proj_dir, 'postprocessing', 'DCM', 'AccOFC_PutPFC_vPutdPFC', 'GCM.mat'), 'r');
+    f = h5py.File(os.path.join(proj_dir, 'postprocessing', 'DCM', 'AccOFC_PutPFC_vPutdPFC_full', 'GCM.mat'), 'r');
     GCM = f['GCM']
     tmp = []
     for i in range(np.shape(GCM)[0]):
