@@ -23,7 +23,7 @@ from nilearn.image import load_img, new_img_like, resample_to_img, binarize_img,
 from nilearn.plotting import plot_matrix, plot_glass_brain, plot_stat_map, plot_img_comparison, plot_img, plot_roi, view_img
 from nilearn.input_data import NiftiMasker, NiftiLabelsMasker, NiftiSpheresMasker
 from nilearn.glm.first_level import FirstLevelModel
-from nilearn.glm.second_level import SecondLevelModel
+from nilearn.glm.second_level import SecondLevelModel, non_parametric_inference
 from nilearn.glm import threshold_stats_img
 from nilearn.reporting import get_clusters_table
 import numpy as np
@@ -85,9 +85,9 @@ with open(atlas_cfg_path) as jsf:
 seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
         'dCaudL':[-13,15,9], 'dCaudR':[13,15,9], \
         'dPutL':[-28,1,3], 'dPutR':[28,1,3], \
-        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3], \
-        'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
-        'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
+        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3]} #, \
+        #'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
+        #'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
 
 cohorts = ['controls', 'patients']
 
@@ -327,20 +327,8 @@ def resample_masks(masks):
         out_masks.append(resample_to_img(mask, ref_mask, interpolation='nearest'))
     return out_masks
 
-def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, masks=[]):
-    """ Perform second level analysis based on seed-to-voxel correlation maps """
-    # naming convention is file system
-    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
-
-    # get images path
-    con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
-    pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
-    flist = np.hstack([con_flist, pat_flist])
-
-    # remove revoked subjects
-    if args.revoked != []:
-        flist = [l for l in flist if ~np.any([s in l for s in revoked])]
-
+def mask_imgs(flist, masks, args=None):
+    """ mask input images using intersection of template masks and pre-compuetd within-groups union mask """
     # mask images to improve SNR
     t_mask = time()
     if args.use_gm_mask:
@@ -365,6 +353,23 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
         imgs = list(flist)
         masker=None
     print('Masking took {:.2f}s'.format(time()-t_mask))
+    return imgs, masker
+
+def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, masks=[]):
+    """ Perform second level analysis based on seed-to-voxel correlation maps """
+    # naming convention is file system
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+
+    # get images path
+    con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
+    pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
+    flist = np.hstack([con_flist, pat_flist])
+
+    # remove revoked subjects
+    if args.revoked != []:
+        flist = [l for l in flist if ~np.any([s in l for s in revoked])]
+
+    imgs, masker = mask_imgs(flist, masks=masks, args=args)
 
     # perform analysis
     t_glm = time()
@@ -504,7 +509,8 @@ def compute_voi_corr(subjs, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 
                 corr_map = load_img(os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed',
                                     metric, fwhm, seed, cohort, fname))
                 # load voi mask
-                voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', subj, 'spm/masks', 'local_'+'_'.join([voi, metric])+'.nii'))
+                #voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', subj, 'spm/masks', 'local_'+'_'.join([voi, metric])+'.nii'))
+                voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', 'SPM', 'seeds_and_rois', voi+'_sphere3mm.nii.gz'))
                 voi_mask = resample_to_img(voi_mask, corr_map, interpolation='nearest')
 
                 # extract correlations
@@ -542,9 +548,9 @@ def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R
       plt.tight_layout()
 
     if args.save_figs:
-        figname = 'seed_to_voi_corr_voilinplot_3pathways.svg'
-        #plt.savefig(os.path.join(proj_dir, 'img', figname))
-        plt.savefig(os.path.join('/home/sebastin/tmp/', figname))
+        figname = 'seed_to_voi_FC_3pathways_sphere3mm.svg'
+        plt.savefig(os.path.join(proj_dir, 'img', figname))
+        #plt.savefig(os.path.join('/home/sebastin/tmp/', figname))
 
 
 def print_voi_stats(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
@@ -566,6 +572,124 @@ def print_voi_stats(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC
             t,p = scipy.stats.ttest_ind(df_con['corr'], df_pat['corr'])
             d = cohen_d(df_con['corr'], df_pat['corr'])
             print("{} {} {} {}   T={:.3f}   p={:.3f}   cohen's d={:.2f}".format(atlas,metric,fwhm,key,t,p,d))
+
+
+def compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, args):
+    """ reconstruct within-group masks using non-parametric inference """
+    # controls
+    imgs, masker = mask_imgs(con_flist, masks=masks, args=args)
+    neg_log_pvals_within_con = non_parametric_inference(list(np.sort(con_flist)),
+                                 design_matrix=pd.DataFrame(np.ones([len(con_flist),1])),
+                                 model_intercept=True, n_perm=args.n_perm,
+                                 two_sided_test=args.two_sided_within_group, mask=masker, n_jobs=10, verbose=1)
+    within_con_mask = binarize_img(neg_log_pvals_within_con, threshold=1.3) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
+    # patients
+    imgs, masker = mask_imgs(pat_flist, masks=masks, args=args)
+    neg_log_pvals_within_pat = non_parametric_inference(list(np.sort(pat_flist)),
+                                 design_matrix=pd.DataFrame(np.ones([len(pat_flist),1])),
+                                 model_intercept=True, n_perm=args.n_perm,
+                                 two_sided_test=args.two_sided_within_group, mask=masker, n_jobs=10, verbose=1)
+    within_pat_mask = binarize_img(neg_log_pvals_within_pat, threshold=1.3) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
+    within_groups_mask = nilearn.masking.intersect_masks([within_con_mask, within_pat_mask], threshold=0, connected=False)
+    return within_groups_mask
+
+
+def non_parametric_analysis(subjs, seed, metric, pre_metric, masks=[], args=None):
+    """ Performs a non-parametric inference """
+    post_metric = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/', pre_metric, metric, post_metric)
+
+    # create imgs file list
+    con_flist = glob.glob(os.path.join(in_dir, seed, 'controls', '*'))
+    pat_flist = glob.glob(os.path.join(in_dir, seed, 'patients', '*'))
+    pat_flist = [pf for pf in pat_flist if 'sub-patient16' not in pf]
+    flist = np.hstack([con_flist, pat_flist])
+
+    design_matrix = create_design_matrix(subjs)
+
+    if args.use_SPM_mask:
+        # template masking (& SPM within-group masks) need to be set manually via commenting others
+        mask = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, seed, 'scrub_out_1/'+seed+'_fl_0001unc_005fwe.nii.gz') # within-group
+        #fspt_mask = binarize_img(os.path.join(proj_dir, 'utils', 'Larger_FrStrPalThal_schaefer100_tianS1MNI_lps_mni.nii.gz')) # fronto-striato-pallido-thalamic (fspt) mask
+        #mask = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, seed, 'scrub_out_1/'+seed+'_fl_0001unc_and_FrStrPalThal_mask.nii') # fspt & within-group
+        #gm_mask = os.path.join(proj_dir, 'utils', 'schaefer_cortical.nii.gz') # gray matter only
+    else:
+        # create within-group masks non-parametrically
+        mask = compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, args)
+
+    # between-groups non-parametric inference
+    neg_log_pvals_permuted_ols_unmasked = \
+        non_parametric_inference(list(np.sort(flist)),
+                                 design_matrix=pd.DataFrame(design_matrix['con'] - design_matrix['pat']),
+                                 model_intercept=True, n_perm=args.n_perm,
+                                 two_sided_test=args.two_sided_between_group, mask=mask, n_jobs=10, verbose=1)
+
+    return neg_log_pvals_permuted_ols_unmasked, mask
+
+def plot_non_param_maps(neg_log_pvals, seed, suffix, args=None):
+    """ plot and save outputs of the non-parametric analysis """
+    if args.plot_figs:
+        plot_stat_map(neg_log_pvals, threshold=0.2, colorbar=True, title=' '.join([seed,suffix]), draw_cross=False) #cut_coords=[-24,55,34]
+    if args.save_figs:
+        plot_stat_map(neg_log_pvals, threshold=0.2, colorbar=True, title=' '.join([seed,suffix]), draw_cross=False,
+                      output_file=os.path.join(proj_dir, 'img', '_'.join([seed,suffix])+'.pdf')) #cut_coords=[-24,55,34]
+
+
+def compute_FC_within_masks(subjs, np_results, seeds = ['Acc', 'dPut', 'vPut'], args=None):
+    """ compute FC within masks used for the between-group analysis """
+    dfs = []
+    fwhm = 'brainFWHM{}mm'.format(int(args.brain_smoothing_fwhm))
+    for atlas,metric in itertools.product(args.atlases, args.metrics):
+        for subj in subjs:
+            if 'control' in subj:
+                cohort = 'controls'
+            else:
+                cohort = 'patients'
+            for seed in seeds:
+                # load correlation map
+                fname = '_'.join([subj, metric, fwhm, atlas, seed, 'ns_sphere_seed_to_voxel_corr.nii'])
+                corr_map = load_img(os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed',
+                                    metric, fwhm, seed, cohort, fname))
+                voi_mask = resample_to_img(np_results[seed]['within_group_mask'], corr_map, interpolation='nearest')
+
+                # extract correlations
+                voi_corr = corr_map.get_fdata().copy() * voi_mask.get_fdata().copy()
+                for corr in np.ravel(voi_corr[voi_corr!=0]):
+                    df_line = {'subj':subj, 'metric':metric, 'atlas':atlas, 'fwhm':fwhm, 'cohort':cohort, 'seed':seed, 'corr':corr}
+                    dfs.append(df_line)
+    df_mask_corr = pd.DataFrame(dfs)
+    return df_mask_corr
+
+def plot_within_mask_corr(df_mask_corr, seeds = ['Acc', 'dPut', 'vPut'], args=None):
+    """ bar plots of FC in pahtways """
+    colors = ['lightgrey', 'darkgrey']
+    sbn.set_palette(colors)
+    plt.rcParams.update({'font.size': 20, 'axes.linewidth':2})
+    ylim = [-0.15, 0.3]
+    fig = plt.figure(figsize=[12,6])
+    df_mask_corr['corr'] = df_mask_corr['corr'] / 880.
+    df_mask_corr['corr'].loc[df_mask_corr['corr']>1] = 1
+    df_mask_corr['corr'].loc[df_mask_corr['corr']<-1] = -1
+
+    for i,seed in enumerate(seeds):
+      ax = plt.subplot(1,len(seeds),i+1)
+      #sbn.barplot(data=df_mask_corr[df_mask_corr['seed']==seed], y='corr', x='seed', hue='cohort', orient='v')
+      #sbn.swarmplot(data=df_mask_corr[df_mask_corr['seed']==seed], y='corr', x='seed', hue='cohort', orient='v', dodge=True, size=0.1)
+      sbn.violinplot(data=df_mask_corr[df_mask_corr['seed']==seed], y='corr', x='seed', hue='cohort', orient='v', split=True, scale_hue=True,
+                     inner='quartile', dodge=True, width=0.8, cut=1)
+      ax.spines['top'].set_visible(False)
+      ax.spines['right'].set_visible(False)
+      ax.tick_params(width=2)
+      if i==len(seeds)-1:
+        plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+      else:
+        ax.get_legend().set_visible(False)
+      plt.tight_layout()
+
+    if args.save_figs:
+        figname = 'seed_to_mask_corr_3seeds.svg'
+        plt.savefig(os.path.join(proj_dir, 'img', figname))
+
 
 
 if __name__=='__main__':
@@ -590,6 +714,12 @@ if __name__=='__main__':
     parser.add_argument('--brain_smoothing_fwhm', default=8., type=none_or_float, action='store', help='brain smoothing FWHM (default 8mm as in Harrison 2009)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold")
     parser.add_argument('--compute_voi_corr', default=False, action='store_true', help="compute seed to VOI correlation and print stats")
+    parser.add_argument('--non_parametric_analysis', default=False, action='store_true', help="compute between group analysis using non-parametric inference")
+    parser.add_argument('--use_SPM_mask', default=False, action='store_true', help="use within-group masks generated from SPM (one-tailed)")
+    parser.add_argument('--two_sided_within_group', default=False, action='store_true', help="use two-tailed test to recreate within-group mask with parametric inference")
+    parser.add_argument('--two_sided_between_group', default=False, action='store_true', help="use two-tailed test for between-group analysis with parametric inference")
+    parser.add_argument('--n_perm', type=int, default=5000, action='store', help="number of permutation for non-parametric analysis")
+    parser.add_argument('--within_mask_corr', default=False, action='store_true', help="compute FC within group masks and plot")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -649,3 +779,25 @@ if __name__=='__main__':
         df_voi_corr = compute_voi_corr(subjs, args=args)
         print_voi_stats(df_voi_corr, args=args)
         plot_voi_corr(df_voi_corr, args=args)
+
+    if args.non_parametric_analysis:
+        suffix = 'non_parametric'
+        if args.two_sided_within_group:
+            suffix += '_within2tailed'
+        if args.two_sided_between_group:
+            suffix += '_between2tailed'
+
+        np_results = dict()
+        for seed,metric in itertools.product(subrois, metrics):
+            neg_log_pvals, mask = non_parametric_analysis(subjs, seed, metric, pre_metric, args=args)
+            plot_non_param_maps(neg_log_pvals, seed, suffix, args)
+            np_results[seed] = {'neg_log_pvals':neg_log_pvals, 'within_group_mask':mask}
+
+        if args.save_outputs:
+            with gzip.open(os.path.join(proj_dir, 'postprocessing', 'non_parametric', suffix+'.pkl.gz'), 'wb') as f:
+                pickle.dump(np_results,f)
+
+    if args.within_mask_corr:
+        df_mask_corr = compute_FC_within_masks(subjs, np_results, args=args)
+        if args.plot_figs:
+            plot_within_mask_corr(df_mask_corr, args=args)
