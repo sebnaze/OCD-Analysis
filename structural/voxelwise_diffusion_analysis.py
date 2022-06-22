@@ -13,6 +13,7 @@ import json
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.ticker import FormatStrFormatter
 import nibabel as nib
 import nilearn
 from nilearn.image import load_img, binarize_img, threshold_img, mean_img, new_img_like
@@ -230,6 +231,8 @@ def get_group_masks(dsi_m, args):
 
 
 def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
+    plt.rcParams.update({'font.size':12, 'font.family':['Arial'], 'pdf.fonttype': 42})
+
     fig = plt.figure(figsize=[8,4])
 
     ax1 = plt.subplot(1,3,1)
@@ -248,7 +251,7 @@ def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
     bplot = sbn.boxplot(data=df_dsi, y='mean_dsi', x='subroi', hue='cohorts', orient='v', ax=ax3, fliersize=0)
     #bplot.set_facecolor('blue')
     #bplot['boxes'][1].set_facecolor('orange')
-    splot = sbn.swarmplot(data=df_dsi, y='mean_dsi', x='subroi', hue='cohorts', orient='v', ax=ax3, dodge=True, linewidth=1, size=6, alpha=0.6)
+    #splot = sbn.swarmplot(data=df_dsi, y='mean_dsi', x='subroi', hue='cohorts', orient='v', ax=ax3, dodge=True, linewidth=1, size=6, alpha=0.6)
     plt.ylim(ylims);
     ax3.spines['top'].set_visible(False)
     ax3.spines['right'].set_visible(False)
@@ -257,7 +260,27 @@ def plot_tdi_distrib(df_dsi, thr, args, ylims=[0.05, 0.15]):
     fig.tight_layout()
 
     if args.save_figs:
-        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_3pathways_'+str(thr)+'_05-05-2022.svg'))
+        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_3pathways_'+str(thr)+'_14-06-2022.svg'))
+
+    if args.plot_figs:
+        plt.show(block=False)
+    plt.close()
+
+    # Pathway specific
+    fig = plt.figure(figsize=[7,3])
+    for i,pathway in enumerate(['AccOFC', 'PutPFC', 'vPutdPFC']):
+        ax = plt.subplot(1,3,i+1)
+        splot = sbn.swarmplot(data=df_dsi[df_dsi['subroi']==pathway], y='mean_dsi', x='subroi', hue='cohorts', orient='v', ax=ax, dodge=True, linewidth=0.5, size=3, alpha=0.8)
+        #plt.ylim(ylims);
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.get_legend().set_visible(False)
+        #lgd = ax.legend(handles=splot.patches, labels=['HC', 'OCD'], bbox_to_anchor=(1, 1))
+
+    fig.tight_layout()
+
+    if args.save_figs:
+        plt.savefig(os.path.join(proj_dir, 'img', 'TD_FA_con_vs_pat_3_ind_pathways_'+str(thr)+'_14-06-2022.pdf'))
 
     if args.plot_figs:
         plt.show(block=False)
