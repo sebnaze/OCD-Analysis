@@ -83,13 +83,23 @@ with open(atlas_cfg_path) as jsf:
 
 # Harrison 2009 seed locations:
 seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
-        'dCaudL':[-13,15,9], 'dCaudR':[13,15,9], \
         'dPutL':[-28,1,3], 'dPutR':[28,1,3], \
-        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3]} #, \
+        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3], \
+        'dCaudL':[-13,15,9], 'dCaudR':[13,15,9]} #, \
         #'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
         #'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
 
 cohorts = ['controls', 'patients']
+
+pathway_mask = {'Acc':['OFC', 'PFClv', 'PFCv'],
+                'dCaud':['PFCd_', 'PFCmp', 'PFCld_'],
+                'dPut':['PFCl_', 'Ins', 'SomMotB_S2'], #'PFCld_'
+                'vPut':['PFCd', 'PFCm']}
+
+cut_coords = {'Acc':[25,57,-6],
+              'dCaud':None,
+              'dPut':[50,11,19],
+              'vPut':[-25,56,35]}
 
 def none_or_float(value):
     if value == 'None':
@@ -327,8 +337,8 @@ def resample_masks(masks):
         out_masks.append(resample_to_img(mask, ref_mask, interpolation='nearest'))
     return out_masks
 
-def mask_imgs(flist, masks, args=None):
-    """ mask input images using intersection of template masks and pre-compuetd within-groups union mask """
+def mask_imgs(flist, masks=[], seed=None, args=None):
+    """ mask input images using intersection of template masks and pre-computed within-groups union mask """
     # mask images to improve SNR
     t_mask = time()
     if args.use_gm_mask:
@@ -340,24 +350,34 @@ def mask_imgs(flist, masks, args=None):
     if args.use_cortical_mask:
         ctx_mask = load_img(os.path.join(proj_dir, 'utils', 'schaefer_cortical.nii'), dtype=np.float64)
         masks.append(binarize_img(ctx_mask))
+    if args.use_frontal_mask:
+        Fr_node_ids, _ = qsiprep_analysis.get_fspt_Fr_node_ids('schaefer400_tianS4')
+        atlazer = atlaser.Atlaser(atlas='schaefer400_tianS4')
+        Fr_img = atlazer.create_brain_map(Fr_node_ids, np.ones([len(Fr_node_ids),1]))
+        masks.append(binarize_img(Fr_img))
+    if args.use_seed_specific_mask:
+        atlazer = atlaser.Atlaser(atlas='schaefer400_tianS4')
+        frontal_atlas = atlazer.create_subatlas_img(rois=pathway_mask[seed])
+        masks.append(binarize_img(frontal_atlas))
     if masks != []:
         masks = resample_masks(masks)
         mask = nilearn.masking.intersect_masks(masks, threshold=1, connected=False) # thr=1 : intersection; thr=0 : union
         masker = NiftiMasker(mask)
         masker.fit(imgs=list(flist))
-        #masker.generate_report() # use for debug
+        masker.generate_report() # use for debug
         masked_data = masker.transform(imgs=list(flist))
         imgs = masker.inverse_transform(masked_data)
         imgs = list(iter_img(imgs))  # 4D to list of 3D
     else:
         imgs = list(flist)
         masker=None
+        mask = None
     print('Masking took {:.2f}s'.format(time()-t_mask))
-    return imgs, masker
+    return imgs, masker, mask
 
 def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, masks=[]):
     """ Perform second level analysis based on seed-to-voxel correlation maps """
-    # naming convention is file system
+    # naming convention in file system
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
 
     # get images path
@@ -369,7 +389,7 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     if args.revoked != []:
         flist = [l for l in flist if ~np.any([s in l for s in revoked])]
 
-    imgs, masker = mask_imgs(flist, masks=masks, args=args)
+    imgs, masker, mask = mask_imgs(flist, masks=masks, seed=seed, args=args)
 
     # perform analysis
     t_glm = time()
@@ -389,7 +409,7 @@ def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['control
     params = glm.get_params()
     return contrasts, n_voxels, params
 
-def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_threshold=10):
+def threshold_contrast(contrast, height_control='fpr', alpha=0.005, cluster_threshold=10):
     """ cluster threshold contrast at alpha with height_control method for multiple comparisons """
     thresholded_img, thresh = threshold_stats_img(
         contrast, alpha=alpha, height_control=height_control, cluster_threshold=cluster_threshold)
@@ -398,13 +418,15 @@ def threshold_contrast(contrast, height_control='fpr', alpha=0.001, cluster_thre
         two_sided=True, min_distance=5.0)
     return thresholded_img, thresh, cluster_table
 
-def create_within_group_mask(subroi_glm_results):
+def create_within_group_mask(subroi_glm_results, args):
     """ create within group masks to use for between group contrasts to improve SNR """
-    con_img, con_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_con']['z_score'], cluster_threshold=100)
+    con_img, con_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_con']['z_score'],
+                                    cluster_threshold=100, alpha=args.within_group_threshold)
     con_mask = binarize_img(con_img, threshold=con_thr)
-    pat_img, pat_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_pat']['z_score'], cluster_threshold=100)
+    pat_img, pat_thr, c_table = threshold_contrast(subroi_glm_results['first_pass', 'contrasts']['within_pat']['z_score'],
+                                    cluster_threshold=100, alpha=args.within_group_threshold)
     pat_mask = binarize_img(pat_img, threshold=pat_thr)
-    mask = nilearn.masking.intersect_masks([con_mask, pat_mask], threshold=0, connected=False)
+    mask = nilearn.masking.intersect_masks([con_mask, pat_mask], threshold=1, connected=False) # thr=1: intersection; thr=0: union
     return mask, con_mask, pat_mask
 
 
@@ -419,18 +441,24 @@ def run_second_level(subjs, metrics, subrois, args):
         glm_results[subroi] = dict()
 
         t_fp = time()
-        contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args)
+        contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[])
         glm_results[subroi]['first_pass','contrasts'], glm_results[subroi]['n_voxels'], glm_results[subroi]['first_pass','params'] = contrasts, n_voxels, params
         print('{} first pass in {:.2f}s'.format(subroi,time()-t_fp))
 
-        t_wmask = time()
-        within_group_mask, con_mask, pat_mask = create_within_group_mask(glm_results[subroi])
-        print('created within groups mask in {:.2f}s'.format(time()-t_wmask))
+        passes = ['first_pass']
 
-        t_sp = time()
-        contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[within_group_mask])
-        glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels'], glm_results[subroi]['second_pass','params'] = contrasts, n_voxels, params
-        print('{} second pass in {:.2f}s'.format(subroi,time()-t_sp))
+        if args.use_within_group_mask:
+            t_wmask = time()
+            within_group_mask, con_mask, pat_mask = create_within_group_mask(glm_results[subroi], args)
+            glm_results[subroi]['within_group_mask'], glm_results[subroi]['con_mask'], glm_results[subroi]['pat_mask'] = within_group_mask, con_mask, pat_mask
+            print('created within groups mask in {:.2f}s'.format(time()-t_wmask))
+
+            t_sp = time()
+            contrasts, n_voxels, params = perform_second_level_analysis(subroi, metric, design_matrix, args=args, masks=[within_group_mask])
+            glm_results[subroi]['second_pass','contrasts'], glm_results[subroi]['n_voxels'], glm_results[subroi]['second_pass','params'] = contrasts, n_voxels, params
+            print('{} second pass in {:.2f}s'.format(subroi,time()-t_sp))
+
+            passes.append('second_pass')
 
         # Correcting the p-values for multiple testing and taking negative logarithm
         #neg_log_pval = nilearn.image.math_img("-np.log10(np.maximum(1, img * {}))"
@@ -439,14 +467,14 @@ def run_second_level(subjs, metrics, subrois, args):
         #glm_results[subroi]['neg_log_pval'] = neg_log_pval
 
         t_thr = time()
-        for pss in ['first_pass', 'second_pass']:
-            glm_results[subroi][(pss,'fpr',0.001,'thresholded_img')], \
-                glm_results[subroi][(pss,'fpr',0.001,'thresh')], \
-                glm_results[subroi][(pss,'fpr',0.001,'cluster_table')] = threshold_contrast( \
+        for pss in passes:
+            glm_results[subroi][(pss,'fpr',args.fpr_threshold,'thresholded_img')], \
+                glm_results[subroi][(pss,'fpr',args.fpr_threshold,'thresh')], \
+                glm_results[subroi][(pss,'fpr',args.fpr_threshold,'cluster_table')] = threshold_contrast( \
                                 glm_results[subroi][pss,'contrasts']['between']['z_score'])
 
-            print(' '.join([subroi,pss,'clusters at p<0.001 uncorrected:']))
-            print(glm_results[subroi][(pss,'fpr',0.001,'cluster_table')])
+            print(' '.join([subroi,pss,'clusters at p<{:.3f} uncorrected:'.format(args.fpr_threshold)]))
+            print(glm_results[subroi][(pss,'fpr',args.fpr_threshold,'cluster_table')])
 
             glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresholded_img')], \
                 glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresh')], \
@@ -460,19 +488,19 @@ def run_second_level(subjs, metrics, subrois, args):
 
         if args.plot_figs:
             t_plt = time()
-            for pss in ['first_pass', 'second_pass']:
+            for pss in passes:
                 fig = plt.figure(figsize=[16,4])
                 ax1 = plt.subplot(1,2,1)
-                plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',0.001,'thresh')],
-                                axes=ax1, title='_'.join([pss,subroi,'contrast_fpr0001']))
+                plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',args.fpr_threshold,'thresh')],
+                                axes=ax1, title='_'.join([pss,subroi,'contrast_fpr'+str(args.fpr_threshold)]))
                 ax2 = plt.subplot(1,2,2)
                 plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fdr',args.fdr_threshold,'thresh')],
-                                axes=ax2, title='_'.join([pss,subroi,'contrast_fdr{:03d}'.format(int(args.fdr_threshold*100))]))
+                                axes=ax2, title='_'.join([pss,subroi,'contrast_fdr'+str(args.fdr_threshold)]))
                 print('{} plotting took {:.2f}s'.format(subroi,time()-t_plt))
 
                 if args.save_figs:
-                    plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',0.001,'thresh')],
-                    output_file=os.path.join(args.out_dir,subroi+'_'+pss+'_contrast_fpr0001.pdf'))
+                    plot_stat_map(glm_results[subroi][pss,'contrasts']['between']['stat'], draw_cross=False, threshold=glm_results[subroi][(pss,'fpr',args.fpr_threshold,'thresh')],
+                    output_file=os.path.join(args.out_dir,subroi+'_'+pss+'_contrast_fpr{:.3f}.pdf'.format(args.fpr_threshold)))
 
         print('Finished 2nd level analysis for '+subroi+' ROI in {:.2f}s'.format(time()-t0))
 
@@ -574,23 +602,23 @@ def print_voi_stats(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC
             print("{} {} {} {}   T={:.3f}   p={:.3f}   cohen's d={:.2f}".format(atlas,metric,fwhm,key,t,p,d))
 
 
-def compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, args):
+def compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, seed, args):
     """ reconstruct within-group masks using non-parametric inference """
     # controls
-    imgs, masker = mask_imgs(con_flist, masks=masks, args=args)
+    imgs, masker, mask = mask_imgs(con_flist, masks=masks, seed=seed, args=args)
     neg_log_pvals_within_con = non_parametric_inference(list(np.sort(con_flist)),
                                  design_matrix=pd.DataFrame(np.ones([len(con_flist),1])),
                                  model_intercept=True, n_perm=args.n_perm,
                                  two_sided_test=args.two_sided_within_group, mask=masker, n_jobs=10, verbose=1)
-    within_con_mask = binarize_img(neg_log_pvals_within_con, threshold=1.3) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
+    within_con_mask = binarize_img(neg_log_pvals_within_con, threshold=0.) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
     # patients
-    imgs, masker = mask_imgs(pat_flist, masks=masks, args=args)
+    imgs, masker, mask = mask_imgs(pat_flist, masks=masks, seed=seed, args=args)
     neg_log_pvals_within_pat = non_parametric_inference(list(np.sort(pat_flist)),
                                  design_matrix=pd.DataFrame(np.ones([len(pat_flist),1])),
                                  model_intercept=True, n_perm=args.n_perm,
                                  two_sided_test=args.two_sided_within_group, mask=masker, n_jobs=10, verbose=1)
-    within_pat_mask = binarize_img(neg_log_pvals_within_pat, threshold=1.3) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
-    within_groups_mask = nilearn.masking.intersect_masks([within_con_mask, within_pat_mask], threshold=0, connected=False)
+    within_pat_mask = binarize_img(neg_log_pvals_within_pat, threshold=0.) # -log(p)>1.3 corresponds to p<0.05 (p are already bonferroni corrected)
+    within_groups_mask = nilearn.masking.intersect_masks([within_con_mask, within_pat_mask], threshold=0, connected=False) # thr=0:union, thr=1:intersection
     return within_groups_mask
 
 
@@ -613,9 +641,11 @@ def non_parametric_analysis(subjs, seed, metric, pre_metric, masks=[], args=None
         #fspt_mask = binarize_img(os.path.join(proj_dir, 'utils', 'Larger_FrStrPalThal_schaefer100_tianS1MNI_lps_mni.nii.gz')) # fronto-striato-pallido-thalamic (fspt) mask
         #mask = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, seed, 'scrub_out_1/'+seed+'_fl_0001unc_and_FrStrPalThal_mask.nii') # fspt & within-group
         #gm_mask = os.path.join(proj_dir, 'utils', 'schaefer_cortical.nii.gz') # gray matter only
-    else:
+    elif args.use_within_group_mask:
         # create within-group masks non-parametrically
-        mask = compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, args)
+        mask = compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matrix, masks, seed, args)
+    else:
+        imgs, masker, mask = mask_imgs(flist, masks=masks, seed=seed, args=args)
 
     # between-groups non-parametric inference
     neg_log_pvals_permuted_ols_unmasked = \
@@ -650,7 +680,7 @@ def compute_FC_within_masks(subjs, np_results, seeds = ['Acc', 'dPut', 'vPut'], 
                 fname = '_'.join([subj, metric, fwhm, atlas, seed, 'ns_sphere_seed_to_voxel_corr.nii'])
                 corr_map = load_img(os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed',
                                     metric, fwhm, seed, cohort, fname))
-                voi_mask = resample_to_img(np_results[seed]['within_group_mask'], corr_map, interpolation='nearest')
+                voi_mask = resample_to_img(np_results[seed]['mask'], corr_map, interpolation='nearest')
 
                 # extract correlations
                 voi_corr = corr_map.get_fdata().copy() * voi_mask.get_fdata().copy()
@@ -691,6 +721,145 @@ def plot_within_mask_corr(df_mask_corr, seeds = ['Acc', 'dPut', 'vPut'], args=No
         plt.savefig(os.path.join(proj_dir, 'img', figname))
 
 
+def get_file_lists(subjs, seed, metric, args):
+    """ returns 3 file lists corresponding to controls, patients, and combined
+    controls+patients paths of imgs to process """
+    # naming convention in file system
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    # get images path
+    con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
+    pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
+    # remove revoked subjects -- do controls and patients separately on purpose
+    if args.revoked != []:
+        con_flist = [l for l in con_flist if ~np.any([s in l for s in revoked])]
+        pat_flist = [l for l in pat_flist if ~np.any([s in l for s in revoked])]
+    flist = np.hstack([con_flist, pat_flist])
+    return con_flist, pat_flist, flist
+
+
+def use_randomise(subjs, seed, metric, args=None):
+    """ perform non-parametric inference using FSL randomise and cluster-based enhancement """
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    _,_,flist = get_file_lists(subjs, seed, metric, args)
+    # create 4D image from list of 3D
+    imgs_4D = nilearn.image.concat_imgs(flist, auto_resample=True)
+    dm = create_design_matrix(subjs)
+
+    # import mask path
+    mask_path = os.path.join(proj_dir, 'utils', 'frontal_'+seed+'_mapping.nii.gz')
+    mask = resample_to_img(mask_path, imgs_4D, interpolation='nearest')
+
+    # outputs/savings to file
+    out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
+    os.makedirs(out_dir, exist_ok=True)
+    dm.to_csv(os.path.join(out_dir, 'design_mat'), sep=' ', index=False, header=False)
+    if args.OCD_minus_HC:
+        np.savetxt(os.path.join(out_dir, 'design_con'), np.array([[-1, 1]]).astype(int), fmt='%i')
+        suffix = '_OCD_minus_HC'
+    else:
+        np.savetxt(os.path.join(out_dir, 'design_con'), np.array([[1, -1]]).astype(int), fmt='%i')
+        suffix = '_HC_minus_OCD'
+    suffix += '_13062022'
+    dmat = os.path.join(out_dir, 'design.mat')
+    dcon = os.path.join(out_dir, 'design.con')
+    os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_mat'), dmat))
+    os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_con'), dcon))
+
+    in_file = os.path.join(out_dir, seed+'_imgs_4D.nii.gz')
+    nib.save(imgs_4D, in_file)
+    mask_file = os.path.join(out_dir, seed+'_pathway_mask_13062022.nii.gz')
+    nib.save(mask, mask_file)
+
+
+    if args.use_TFCE:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix) #'_c'+str(int(args.cluster_thresh*10)))
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
+    else:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix)
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
+    print(cmd)
+    #pdb.set_trace()
+    os.system(cmd)
+
+
+def plot_randomise_outputs(seed, metric, args):
+    """ plot the outcomes of the non-paramteric infernece using randomise and TFCE """
+    locs = {'Acc':None,
+            'dCaud':None,
+            'dPut':None,
+            'vPut':[-49,30,12]}
+    fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    if args.OCD_minus_HC:
+        suffix = '_OCD_minus_HC'
+    else:
+        suffix = '_HC_minus_OCD'
+    #suffix += '_13062022'
+    out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
+
+    if args.use_TFCE:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_corrp_tstat1.nii.gz')
+    else:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_clustere_corrp_tstat1.nii.gz')
+
+    plt.figure(figsize=[16,12])
+
+    # FWE p-values
+    ax1 = plt.subplot(3,2,1)
+    plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' randomise -- {} \n corrp'.format(suffix[1:]))
+    ax2 = plt.subplot(3,2,2)
+    plot_stat_map(out_file, threshold=0.95, axes=ax2, draw_cross=False, cmap='Oranges',
+                    title=seed+' randomise -- {} -- corrp>0.95 (p<0.05)'.format(suffix[1:]),
+                    cut_coords=locs[seed])
+
+    # T-stats
+    if args.use_TFCE:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tstat1.nii.gz')
+    else:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+'_tstat1.nii.gz')
+    ax3 = plt.subplot(3,2,3)
+    plot_stat_map(out_file, axes=ax3, draw_cross=False, title=seed+' randomise -- {} \n tstat1'.format(suffix[1:]))
+    ax4 = plt.subplot(3,2,4)
+    plot_stat_map(out_file, threshold=args.cluster_thresh, axes=ax4, draw_cross=False, cmap='Oranges', title=seed+' randomise -- {} -- tstat1>{:.1f}'.format(suffix[1:],args.cluster_thresh))
+
+    # FDR p-vals
+    if args.use_TFCE:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_p_tstat1.nii.gz')
+    else:
+        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_p_tstat1.nii.gz')
+    plt.figure(figsize=[16,4])
+    ax1 = plt.subplot(3,2,5)
+    plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' p_unc')
+    ax2 = plt.subplot(3,2,6)
+    plot_stat_map(out_file, threshold=0.999, axes=ax2, draw_cross=False, cmap='Oranges', title=seed+' p_unc<0.001')
+
+    img = load_img(out_file)
+    data = img.get_fdata().copy()
+    nz_inds = np.nonzero(data)
+    p_unc = 1 - data[nz_inds]
+    sinds_p_unc = np.argsort(p_unc)
+    reject, p_fdr, _, _ = multitest.multipletests(p_unc, alpha=0.05, method='fdr_bh')
+    # put FDR corrected pvals back in place
+    data[nz_inds] = 1 - p_fdr
+    fdr_img = new_img_like(img, data)
+    plot_stat_map(fdr_img, threshold=0.9, draw_cross=False, cmap='Oranges', title=seed+' p_fdr<0.1')
+
+
+def plot_within_group_masks(subrois, glm_results, args):
+    """ display maps of within-group contrasts """
+    for subroi in subrois:
+        plt.figure(figsize=[18,4])
+        ax1 = plt.subplot(1,3,1)
+        plot_stat_map(glm_results[subroi]['con_mask'],
+                    axes=ax1, title=subroi+' within_con p<{}'.format(args.fpr_threshold),
+                    cut_coords=cut_coords[subroi], draw_cross=False, cmap='Oranges', colorbar=False)
+        ax2 = plt.subplot(1,3,2)
+        plot_stat_map(glm_results[subroi]['pat_mask'],
+                    axes=ax2, title=subroi+' within_pat p<{}'.format(args.fpr_threshold),
+                    cut_coords=cut_coords[subroi], draw_cross=False, cmap='Oranges', colorbar=False)
+        ax3 = plt.subplot(1,3,3)
+        plot_stat_map(glm_results[subroi]['within_group_mask'],
+                    axes=ax3, title=subroi+' within-group mask p<{}'.format(args.fpr_threshold),
+                    cut_coords=cut_coords[subroi], draw_cross=False, cmap='Oranges', colorbar=False)
 
 if __name__=='__main__':
 
@@ -704,15 +873,24 @@ if __name__=='__main__':
     parser.add_argument('--plot_figs', default=False, action='store_true', help='plot figures')
     parser.add_argument('--subj', default=None, action='store', help='to process a single subject, give subject ID (default: process all subjects)')
     parser.add_argument('--run_second_level', default=False, action='store_true', help='run second level statistics')
-    parser.add_argument('--use_gm_mask', default=False, action='store_true', help='use a gray matter mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_gm_mask', default=False, action='store_true', help='use a whole brain gray matter mask to reduce the space of the second level analysis')
     parser.add_argument('--use_fspt_mask', default=False, action='store_true', help='use a fronto-striato-pallido-thalamic mask to reduce the space of the second level analysis')
-    parser.add_argument('--use_cortical_mask', default=False, action='store_true', help='use a cortical mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_cortical_mask', default=False, action='store_true', help='use a cortical gm mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_frontal_mask', default=False, action='store_true', help='use a frontal gm mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_seed_specific_mask', default=False, action='store_true', help='use a seed-spefici frontal gm mask to reduce the space of the second level analysis')
+    parser.add_argument('--use_within_group_mask', default=False, action='store_true', help='use a union of within-group masks to reduce the space of the second level analysis')
     parser.add_argument('--unzip_corr_maps', default=False, action='store_true', help='unzip correlation maps for use in SPM (not necessary if only nilearn analysis)')
     parser.add_argument('--min_time_after_scrubbing', default=None, type=float, action='store', help='minimum time (in minutes) needed per subject needed to be part of the analysis (after scrubbing (None=keep all subjects))')
     parser.add_argument('--prep_fsl_randomise', default=False, action='store_true', help='Prepare 4D images for running FSL randomise')
+    parser.add_argument('--use_randomise', default=False, action='store_true', help='run FSL randomise -- independent from prep_fsl_randomise')
+    parser.add_argument('--cluster_thresh', type=float, default=4., action='store', help="T stat to threshold to create clusters from voxel stats")
+    parser.add_argument('--use_TFCE', default=False, action='store_true', help="use Threshold-Free Cluster Enhancement with randomise ")
+    parser.add_argument('--OCD_minus_HC', default=False, action='store_true', help='direction of the test in FSL randomise -- default is HC-OCD, using this flag makes OCD-HC')
     parser.add_argument('--create_sphere_within_cluster', default=False, action='store_true', help='export sphere around peak within VOI cluster in prep for DCM analysis')
     parser.add_argument('--brain_smoothing_fwhm', default=8., type=none_or_float, action='store', help='brain smoothing FWHM (default 8mm as in Harrison 2009)')
-    parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold")
+    parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold, FDR corrected")
+    parser.add_argument('--fpr_threshold', type=float, default=0.001, action='store', help="cluster level threshold, uncorrected")
+    parser.add_argument('--within_group_threshold', type=float, default=0.005, action='store', help="threshold to create within-group masks")
     parser.add_argument('--compute_voi_corr', default=False, action='store_true', help="compute seed to VOI correlation and print stats")
     parser.add_argument('--non_parametric_analysis', default=False, action='store_true', help="compute between group analysis using non-parametric inference")
     parser.add_argument('--use_SPM_mask', default=False, action='store_true', help="use within-group masks generated from SPM (one-tailed)")
@@ -720,6 +898,7 @@ if __name__=='__main__':
     parser.add_argument('--two_sided_between_group', default=False, action='store_true', help="use two-tailed test for between-group analysis with parametric inference")
     parser.add_argument('--n_perm', type=int, default=5000, action='store', help="number of permutation for non-parametric analysis")
     parser.add_argument('--within_mask_corr', default=False, action='store_true', help="compute FC within group masks and plot")
+    parser.add_argument('--plot_within_group_masks', default=False, action='store_true', help="plot within-group masks used in second pass")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -769,16 +948,30 @@ if __name__=='__main__':
         if args.prep_fsl_randomise:
             prep_fsl_randomise(in_fnames, subrois, metrics, args)
 
+    # use randomise (independent from prep_fsl_randomise)
+    if args.use_randomise:
+        for seed,metric in itertools.product(subrois,metrics):
+            use_randomise(subjs, seed, metric, args)
+            if args.plot_figs:
+                plot_randomise_outputs(seed, metric, args)
+
     if args.run_second_level:
         out_dir = os.path.join(proj_dir, 'postprocessing', 'glm', pre_metric)
         os.makedirs(out_dir, exist_ok=True)
         args.out_dir = out_dir
         glm_results = run_second_level(subjs, metrics, subrois, args)
 
+        if args.plot_within_group_masks:
+            plot_within_group_masks(subrois, glm_results, args)
+
     if args.compute_voi_corr:
         df_voi_corr = compute_voi_corr(subjs, args=args)
         print_voi_stats(df_voi_corr, args=args)
         plot_voi_corr(df_voi_corr, args=args)
+
+        if args.save_outputs:
+            with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'wb') as f:
+                pickle.dump(df_voi_corr,f)
 
     if args.non_parametric_analysis:
         suffix = 'non_parametric'
@@ -789,9 +982,9 @@ if __name__=='__main__':
 
         np_results = dict()
         for seed,metric in itertools.product(subrois, metrics):
-            neg_log_pvals, mask = non_parametric_analysis(subjs, seed, metric, pre_metric, args=args)
+            neg_log_pvals, mask = non_parametric_analysis(subjs, seed, metric, pre_metric, args=args, masks=[])
             plot_non_param_maps(neg_log_pvals, seed, suffix, args)
-            np_results[seed] = {'neg_log_pvals':neg_log_pvals, 'within_group_mask':mask}
+            np_results[seed] = {'neg_log_pvals':neg_log_pvals, 'mask':mask}
 
         if args.save_outputs:
             with gzip.open(os.path.join(proj_dir, 'postprocessing', 'non_parametric', suffix+'.pkl.gz'), 'wb') as f:
