@@ -18,6 +18,7 @@ import numpy as np
 import os
 import pickle
 import pandas as pd
+import seaborn as sbn
 import scipy
 from scipy.io import loadmat
 import sklearn
@@ -180,6 +181,70 @@ def print_ybocs_fc_relation(df):
             r,p = scipy.stats.pearsonr(df[e], df[y])
             print('{:20}  {:25}  r={:.3f}  p={:.3f}'.format(e, y, r, p))
 
+
+def plot_corr_voi(df_pat, args=None):
+    """ plot correlation (linear regression + pearson correlation and p-value) between FC and behavioral scores (Y-BOCS) """
+    with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'rb') as f:
+        df_corr_voi = pickle.load(f)
+
+    df_ybocs_corr = df_pat.merge(df_corr_voi[df_corr_voi['cohort']=='patients'])
+    plt.rcParams.update({'font.size':16, 'axes.linewidth':1, 'font.family':['Arial'], 'pdf.fonttype': 42})
+
+    behavs = ['YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total']
+    vois = ['OFC_R', 'PFC_R', 'dPFC_L']
+    seeds = ['Acc', 'dPut', 'vPut']
+
+    for behav in behavs:
+        plt.figure(figsize=[16,4])
+        for i, pathway in enumerate(df_ybocs_corr.pathway.unique()):
+            ax = plt.subplot(1,3,i+1)
+            #plt.plot(df_ybocs_corr[df_ybocs_corr['pathway']==pathway]['YBOCS_Total'], df_ybocs_corr[df_ybocs_corr['pathway']==pathway]['corr'], '.')
+            #plt.xlabel('YBOCS')
+            #plt.ylabel('FC')
+            #plt.title(pathway)
+            data = df_ybocs_corr[df_ybocs_corr['pathway']==pathway]
+            ax = sbn.regplot(data=data, x=behav, y='corr', color='orange')
+            ax.tick_params(width=1)
+            ax.set_alpha(0.8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            r,p = scipy.stats.pearsonr(data[behav], data['corr'])
+            plt.title("{} \nr={:.2f}, p={:.3f}".format(pathway,r,p), fontdict={'fontsize':16})
+
+        plt.tight_layout()
+        if args.save_figs:
+            plt.savefig(os.path.join(proj_dir, 'img', 'FC_{}_relation.pdf'.format(behav)), transparent=True)
+
+
+def plot_corr_voi_eigenvariate(df_pat, df_eigenvariate, args):
+    """ plot relation between ROIs eigenvariate and behavioral measures (Y-BOCS, OCIR, OBQ, etc.) """
+    with open(os.path.join(proj_dir, 'postprocessing', 'df_eigenvariate.pkl'), 'rb') as f:
+        df_eigenvariate = pickle.load(f)
+    df_ybocs_eig = df_pat.merge(df_eigenvariate[df_eigenvariate['cohort']=='patients'])
+
+    plt.rcParams.update({'font.size':12, 'font.family':['Arial'], 'pdf.fonttype': 42})
+
+    behavs = ['YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total']
+    vois = ['OFC_R', 'PFC_R', 'dPFC_L']
+    seeds = ['Acc', 'dPut', 'vPut']
+
+    for behav in behavs:
+        plt.figure(figsize=[16,4])
+        for i,(seed, voi) in enumerate(zip(seeds, vois)):
+            pathway = '_'.join([seed, voi])
+            data = df_ybocs_eig[df_ybocs_eig['pathway']==pathway]
+            ax = plt.subplot(1,3,i+1)
+            sbn.regplot(data=data, x=behav, y='eigenvariate')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            r,p = scipy.stats.pearsonr(data[behav], data['eigenvariate'])
+            plt.title("{} -- r={:.2f}, p={:.3f}".format(pathway,r,p))
+
+        if args.save_figs:
+            plt.savefig(os.path.join(proj_dir, 'img', 'eigenvariate_{}_relation.pdf'.format(behav)), transparent=True)
+
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
@@ -188,6 +253,8 @@ if __name__=='__main__':
     parser.add_argument('--print_demographics', default=False, action='store_true', help='plot demographic *table*')
     parser.add_argument('--print_ybocs_dcm', default=False, action='store_true', help='Y-BOCS to DCM weight relation')
     parser.add_argument('--print_ybocs_fc', default=False, action='store_true', help='Y-BOCS to SPM FC relation')
+    parser.add_argument('--plot_corr_voi', default=False, action='store_true', help='plot relation between seed-to-VOI FC and behavioral measures')
+    parser.add_argument('--plot_corr_voi_eigenvariate', default=False, action='store_true', help='plot relation between seed-to-VOI FC (eigenvariate) and behavioral measures')
     args = parser.parse_args()
 
     revoked=['sub-patient14', 'sub-patient15', 'sub-patient16', 'sub-patient29', 'sub-patient35', 'sub-patient51']
@@ -206,3 +273,10 @@ if __name__=='__main__':
     if args.print_ybocs_dcm:
         df_dcm = get_dcm_results()
         print_ybocs_dcm_relation(df_pat.merge(df_dcm, how='inner'))
+
+    #
+    if args.plot_corr_voi:
+        plot_corr_voi(df_pat, args)
+
+    if args.plot_corr_voi_eigenvariate:
+        plot_corr_voi_eigenvariate(df_pat, args)
