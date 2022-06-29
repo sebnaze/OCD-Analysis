@@ -93,8 +93,8 @@ cohorts = ['controls', 'patients']
 
 pathway_mask = {'Acc':['OFC', 'PFClv', 'PFCv'],
                 'dCaud':['PFCd_', 'PFCmp', 'PFCld_'],
-                'dPut':['PFCl_', 'Ins', 'SomMotB_S2'], #'PFCld_'
-                'vPut':['PFCd', 'PFCm']}
+                'dPut':['Ins', 'SomMotB_S2'], #'PFCld_''PFCl_',
+                'vPut':['PFCl_', 'PFCm']} #'PFCd'
 
 cut_coords = {'Acc':[25,57,-6],
               'dCaud':None,
@@ -118,6 +118,28 @@ def create_design_matrix(subjs):
     design_matrix = pd.DataFrame()
     design_matrix['con'] = design_mat[:,0]
     design_matrix['pat'] = design_mat[:,1]
+    return design_matrix
+
+def create_design_matrix(subjs, args):
+    """ Create a more complex design matrix with group by hemisphere interactions """
+    if args.group_by_hemi:
+        n_con = np.sum(['control' in s for s in subjs])
+        n_pat = np.sum(['patient' in s for s in subjs])
+
+        design_mat = np.zeros((2*(n_con+n_pat),4), dtype=int)
+
+        design_mat[:n_con, 0] = 1 # HC_L
+        design_mat[n_con:2*n_con, 1] = 1 # HC_R
+        design_mat[-2*n_pat:-n_pat, 2] = 1 # OCD_L
+        design_mat[-n_pat:, 3] = 1 # OCD_L
+
+        design_matrix = pd.DataFrame()
+        design_matrix['HC_L'] = design_mat[:,0]
+        design_matrix['HC_R'] = design_mat[:,1]
+        design_matrix['OCD_L'] = design_mat[:,2]
+        design_matrix['OCD_R'] = design_mat[:,3]
+    else:
+        design_matrix = create_design_matrix(subjs)
     return design_matrix
 
 
@@ -727,8 +749,19 @@ def get_file_lists(subjs, seed, metric, args):
     # naming convention in file system
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
     # get images path
-    con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
-    pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
+    if args.group_by_hemi:
+        con_flist = []
+        pat_flist = []
+        for hemi in ['L', 'R']:
+            cl = np.sort(glob.glob(os.path.join(args.in_dir, metric, fwhm, seed+hemi, 'controls', '*')))
+            con_flist.append(cl)
+            pl = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed+hemi, 'patients', '*'))
+            pat_flist.append(pl)
+        con_flist = np.concatenate(con_flist)
+        pat_flist = np.concatenate(pat_flist)
+    else:
+        con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
+        pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
     # remove revoked subjects -- do controls and patients separately on purpose
     if args.revoked != []:
         con_flist = [l for l in con_flist if ~np.any([s in l for s in revoked])]
@@ -737,101 +770,133 @@ def get_file_lists(subjs, seed, metric, args):
     return con_flist, pat_flist, flist
 
 
+def create_contrast_vector(args):
+    """ create contrast vector based on options given in arguments (default: only group difference) """
+    suffix = ''
+    if args.group_by_hemi:
+        if args.OCD_minus_HC:
+            cv = np.array([[-1, 1, 1, -1]])
+            suffix += '_OCD_minus_HC'
+            con_type = 't'
+        else:
+            cv = np.array([[1, -1, 1, -1]])
+            suffix += '_HC_minus_OCD'
+            con_type = 't'
+        cv = np.array([[1, 1, -1, -1],[1, -1, 1, -1],[1, -1, -1, 1]])
+        cm = np.array([[1,0,0], [0,1,0],[0,0,1]])
+        suffix += '_Ftest'
+        suffix += '_group_by_hemi'
+    else:
+        if args.OCD_minus_HC:
+            cv = np.array([[-1, 1]])
+            suffix += '_OCD_minus_HC'
+            con_type = 't'
+        else:
+            cv = np.array([[1, -1]])
+            suffix += '_HC_minus_OCD'
+            con_type = 't'
+
+        cm = np.array([[1,0,0], [0,1,0],[0,0,1]])
+        suffix += '_Ftest'
+    return cv.astype(int), cm.astype(int), suffix
+
+
 def use_randomise(subjs, seed, metric, args=None):
     """ perform non-parametric inference using FSL randomise and cluster-based enhancement """
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
     _,_,flist = get_file_lists(subjs, seed, metric, args)
     # create 4D image from list of 3D
     imgs_4D = nilearn.image.concat_imgs(flist, auto_resample=True)
-    dm = create_design_matrix(subjs)
+    dm = create_design_matrix(subjs, args)
 
     # import mask path
-    mask_path = os.path.join(proj_dir, 'utils', 'frontal_'+seed+'_mapping.nii.gz')
-    mask = resample_to_img(mask_path, imgs_4D, interpolation='nearest')
+    #mask_path = os.path.join(proj_dir, 'utils', 'frontal_'+seed+'_mapping.nii.gz')
+    #mask = resample_to_img(mask_path, imgs_4D, interpolation='nearest')
 
     # outputs/savings to file
     out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
     os.makedirs(out_dir, exist_ok=True)
     dm.to_csv(os.path.join(out_dir, 'design_mat'), sep=' ', index=False, header=False)
-    if args.OCD_minus_HC:
-        np.savetxt(os.path.join(out_dir, 'design_con'), np.array([[-1, 1]]).astype(int), fmt='%i')
-        suffix = '_OCD_minus_HC'
-    else:
-        np.savetxt(os.path.join(out_dir, 'design_con'), np.array([[1, -1]]).astype(int), fmt='%i')
-        suffix = '_HC_minus_OCD'
-    suffix += '_13062022'
+
+    cv, cm, suffix = create_contrast_vector(args)
+    np.savetxt(os.path.join(out_dir, 'design_con'), cv, fmt='%i')
+    np.savetxt(os.path.join(out_dir, 'design_fts'), cm, fmt='%i')
+    suffix += '_28062022'
     dmat = os.path.join(out_dir, 'design.mat')
     dcon = os.path.join(out_dir, 'design.con')
+    dfts = os.path.join(out_dir, 'design.fts')
     os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_mat'), dmat))
     os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_con'), dcon))
+    os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_fts'), dfts))
 
     in_file = os.path.join(out_dir, seed+'_imgs_4D.nii.gz')
     nib.save(imgs_4D, in_file)
-    mask_file = os.path.join(out_dir, seed+'_pathway_mask_13062022.nii.gz')
+    mask_file = os.path.join(out_dir, seed+'_pathway_mask'+suffix+'.nii.gz')
+    _,_,mask = mask_imgs(flist,seed=seed, args=args)
+    mask = resample_to_img(mask, imgs_4D, interpolation='nearest')
     nib.save(mask, mask_file)
 
 
     if args.use_TFCE:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix) #'_c'+str(int(args.cluster_thresh*10)))
-        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
+        cmd = 'randomise_parallel -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -f '+dfts+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
+        #cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -f '+dfts+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
     else:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix)
-        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -'+con_type+' '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
     print(cmd)
     #pdb.set_trace()
     os.system(cmd)
 
 
-def plot_randomise_outputs(seed, metric, args):
+def plot_randomise_outputs(seed, metric, args, stat='f'):
     """ plot the outcomes of the non-paramteric infernece using randomise and TFCE """
     locs = {'Acc':None,
             'dCaud':None,
             'dPut':None,
             'vPut':[-49,30,12]}
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
-    if args.OCD_minus_HC:
-        suffix = '_OCD_minus_HC'
-    else:
-        suffix = '_HC_minus_OCD'
-    #suffix += '_13062022'
+    cv,cm,suffix = create_contrast_vector(args)
+    suffix += '_27062022'
     out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
 
-    if args.use_TFCE:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_corrp_tstat1.nii.gz')
-    else:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_clustere_corrp_tstat1.nii.gz')
+    for i in np.arange(1,4):
+        if args.use_TFCE:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_corrp_'+stat+'stat{}.nii.gz'.format(i))
+        else:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_clustere_corrp_'+stat+'stat{}.nii.gz'.format(i))
 
-    plt.figure(figsize=[16,12])
+        plt.figure(figsize=[16,12])
 
-    # FWE p-values
-    ax1 = plt.subplot(3,2,1)
-    plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' randomise -- {} \n corrp'.format(suffix[1:]))
-    ax2 = plt.subplot(3,2,2)
-    plot_stat_map(out_file, threshold=0.95, axes=ax2, draw_cross=False, cmap='Oranges',
-                    title=seed+' randomise -- {} -- corrp>0.95 (p<0.05)'.format(suffix[1:]),
-                    cut_coords=locs[seed])
+        # FWE p-values
+        ax1 = plt.subplot(3,2,1)
+        plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' randomise -- {} \n corrp {}'.format(suffix[1:], stat))
+        ax2 = plt.subplot(3,2,2)
+        plot_stat_map(out_file, threshold=0.95, axes=ax2, draw_cross=False, cmap='Oranges',
+                        title=seed+' randomise -- {} -- corrp>0.95 (p<0.05)'.format(suffix[1:]),
+                        cut_coords=locs[seed])
 
-    # T-stats
-    if args.use_TFCE:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tstat1.nii.gz')
-    else:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+'_tstat1.nii.gz')
-    ax3 = plt.subplot(3,2,3)
-    plot_stat_map(out_file, axes=ax3, draw_cross=False, title=seed+' randomise -- {} \n tstat1'.format(suffix[1:]))
-    ax4 = plt.subplot(3,2,4)
-    plot_stat_map(out_file, threshold=args.cluster_thresh, axes=ax4, draw_cross=False, cmap='Oranges', title=seed+' randomise -- {} -- tstat1>{:.1f}'.format(suffix[1:],args.cluster_thresh))
+        # stats
+        if args.use_TFCE:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_{}stat{}.nii.gz'.format(stat,i))
+        else:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+'_{}stat{}.nii.gz'.format(stat,i))
+        ax3 = plt.subplot(3,2,3)
+        plot_stat_map(out_file, axes=ax3, draw_cross=False, title=seed+' randomise -- {} \n {}stat{}'.format(suffix[1:],stat,i))
+        ax4 = plt.subplot(3,2,4)
+        plot_stat_map(out_file, threshold=args.cluster_thresh, axes=ax4, draw_cross=False, cmap='Oranges', title=seed+' randomise -- {} -- {}stat{}>{:.1f}'.format(suffix[1:],stat,i,args.cluster_thresh))
 
-    # FDR p-vals
-    if args.use_TFCE:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_p_tstat1.nii.gz')
-    else:
-        out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_p_tstat1.nii.gz')
-    plt.figure(figsize=[16,4])
-    ax1 = plt.subplot(3,2,5)
-    plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' p_unc')
-    ax2 = plt.subplot(3,2,6)
-    plot_stat_map(out_file, threshold=0.999, axes=ax2, draw_cross=False, cmap='Oranges', title=seed+' p_unc<0.001')
-
+        # FDR p-vals
+        if args.use_TFCE:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_p_{}stat{}.nii.gz'.format(stat,i))
+        else:
+            out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_p_{}stat{}.nii.gz'.format(stat,i))
+        plt.figure(figsize=[16,4])
+        ax5 = plt.subplot(3,2,5)
+        plot_stat_map(out_file, axes=ax5, draw_cross=False, title=seed+' p_unc '+stat)
+        ax6 = plt.subplot(3,2,6)
+        plot_stat_map(out_file, threshold=0.999, axes=ax6, draw_cross=False, cmap='Oranges', title=seed+' p_unc<0.001 '+stat)
+"""
     img = load_img(out_file)
     data = img.get_fdata().copy()
     nz_inds = np.nonzero(data)
@@ -841,8 +906,8 @@ def plot_randomise_outputs(seed, metric, args):
     # put FDR corrected pvals back in place
     data[nz_inds] = 1 - p_fdr
     fdr_img = new_img_like(img, data)
-    plot_stat_map(fdr_img, threshold=0.9, draw_cross=False, cmap='Oranges', title=seed+' p_fdr<0.1')
-
+    plot_stat_map(fdr_img, threshold=0.9, draw_cross=False, cmap='Oranges', title=seed+' p_fdr<0.1 '+stat)
+"""
 
 def plot_within_group_masks(subrois, glm_results, args):
     """ display maps of within-group contrasts """
@@ -885,7 +950,8 @@ if __name__=='__main__':
     parser.add_argument('--use_randomise', default=False, action='store_true', help='run FSL randomise -- independent from prep_fsl_randomise')
     parser.add_argument('--cluster_thresh', type=float, default=4., action='store', help="T stat to threshold to create clusters from voxel stats")
     parser.add_argument('--use_TFCE', default=False, action='store_true', help="use Threshold-Free Cluster Enhancement with randomise ")
-    parser.add_argument('--OCD_minus_HC', default=False, action='store_true', help='direction of the test in FSL randomise -- default is HC-OCD, using this flag makes OCD-HC')
+    parser.add_argument('--OCD_minus_HC', default=False, action='store_true', help='direction of the t-test in FSL randomise -- default uses F-test')
+    parser.add_argument('--HC_minus_OCD', default=False, action='store_true', help='direction of the t-test in FSL randomise -- default uses F-test')
     parser.add_argument('--create_sphere_within_cluster', default=False, action='store_true', help='export sphere around peak within VOI cluster in prep for DCM analysis')
     parser.add_argument('--brain_smoothing_fwhm', default=8., type=none_or_float, action='store', help='brain smoothing FWHM (default 8mm as in Harrison 2009)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05, action='store', help="cluster level threshold, FDR corrected")
@@ -899,6 +965,7 @@ if __name__=='__main__':
     parser.add_argument('--n_perm', type=int, default=5000, action='store', help="number of permutation for non-parametric analysis")
     parser.add_argument('--within_mask_corr', default=False, action='store_true', help="compute FC within group masks and plot")
     parser.add_argument('--plot_within_group_masks', default=False, action='store_true', help="plot within-group masks used in second pass")
+    parser.add_argument('--group_by_hemi', default=False, action='store_true', help="use a 4 columns design matrix with group by hemisphere interactions")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -950,10 +1017,10 @@ if __name__=='__main__':
 
     # use randomise (independent from prep_fsl_randomise)
     if args.use_randomise:
-        for seed,metric in itertools.product(subrois,metrics):
-            use_randomise(subjs, seed, metric, args)
+        for subroi,metric in itertools.product(subrois,metrics):
+            use_randomise(subjs, subroi, metric, args)
             if args.plot_figs:
-                plot_randomise_outputs(seed, metric, args)
+                plot_randomise_outputs(subroi, metric, args)
 
     if args.run_second_level:
         out_dir = os.path.join(proj_dir, 'postprocessing', 'glm', pre_metric)
