@@ -84,8 +84,8 @@ with open(atlas_cfg_path) as jsf:
 # Harrison 2009 seed locations:
 seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
         'dPutL':[-28,1,3], 'dPutR':[28,1,3], \
-        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3], \
-        'dCaudL':[-13,15,9], 'dCaudR':[13,15,9]} #, \
+        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3]} #, \
+        #'dCaudL':[-13,15,9], 'dCaudR':[13,15,9]} #, \
         #'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
         #'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
 
@@ -123,9 +123,26 @@ def create_design_matrix(subjs):
 def create_design_matrix(subjs, args):
     """ Create a more complex design matrix with group by hemisphere interactions """
     if args.group_by_hemi:
-        n_con = np.sum(['control' in s for s in subjs])
-        n_pat = np.sum(['patient' in s for s in subjs])
+      n_con = np.sum(['control' in s for s in subjs])
+      n_pat = np.sum(['patient' in s for s in subjs])
+      if args.paired_design:
+        """design_mat = np.zeros((2*(n_con+n_pat),1+n_con+n_pat), dtype=int)
+        design_mat[:2*n_con,0] = 1
+        design_mat[-2*n_pat,0] = -1
+        design_mat[:n_con,1:n_con+1] = np.eye(n_con)
+        design_mat[n_con:2*n_con,1:n_con+1] = np.eye(n_con)
+        design_mat[-n_pat:,n_con+1:] = np.eye(n_pat)
+        design_mat[-2*n_pat:-n_pat,n_con+1:] = np.eye(n_pat)
 
+        design_matrix = pd.DataFrame()
+        design_matrix['group'] = design_mat[:,0]
+        for i,subj in enumerate(subjs):
+          design_matrix[subj] = design_mat[:,i+1]"""
+
+        design_mat = np.eye((2*n_con+2*n_pat))
+        design_matrix = pd.DataFrame(design_mat)
+
+      else:
         design_mat = np.zeros((2*(n_con+n_pat),4), dtype=int)
 
         design_mat[:n_con, 0] = 1 # HC_L
@@ -387,7 +404,7 @@ def mask_imgs(flist, masks=[], seed=None, args=None):
         masker = NiftiMasker(mask)
         masker.fit(imgs=list(flist))
         masker.generate_report() # use for debug
-        masked_data = masker.transform(imgs=list(flist))
+        masked_data = masker.transform(imgs=flist.tolist())
         imgs = masker.inverse_transform(masked_data)
         imgs = list(iter_img(imgs))  # 4D to list of 3D
     else:
@@ -770,9 +787,11 @@ def get_file_lists(subjs, seed, metric, args):
     return con_flist, pat_flist, flist
 
 
-def create_contrast_vector(args):
+def create_contrast_vector(subjs, args):
     """ create contrast vector based on options given in arguments (default: only group difference) """
     suffix = ''
+    n_con = np.sum(['control' in s for s in subjs])
+    n_pat = np.sum(['patient' in s for s in subjs])
     if args.group_by_hemi:
         if args.OCD_minus_HC:
             cv = np.array([[-1, 1, 1, -1]])
@@ -782,8 +801,21 @@ def create_contrast_vector(args):
             cv = np.array([[1, -1, 1, -1]])
             suffix += '_HC_minus_OCD'
             con_type = 't'
-        cv = np.array([[1, 1, -1, -1],[1, -1, 1, -1],[1, -1, -1, 1]])
+        if args.paired_design:
+          cv = []
+          #cv.append(np.ones([1,1+n_con+n_pat]))
+          #cv.append(np.concatenate([-np.ones([1,1]).ravel(), np.ones([1,n_con+n_pat]).ravel()]))
+          #cv.append(np.concatenate([-np.ones([1,1]).ravel(), -np.ones([1,n_con+n_pat]).ravel()]))
+          #cv.append(np.concatenate([np.ones([1,1]).ravel(), -np.ones([1,n_con+n_pat]).ravel()]))
+          cv.append(np.concatenate([np.ones((1,2*n_con)).ravel(), -np.ones((1,2*n_pat)).ravel()]))
+          cv.append(np.concatenate([np.ones((1,n_con)).ravel(), -np.ones((1,n_con)).ravel(), np.ones((1,n_pat)).ravel(), -np.ones((1,n_pat)).ravel()]))
+          cv.append(np.concatenate([np.ones((1,n_con)).ravel(), -np.ones((1,n_con)).ravel(), -np.ones((1,n_pat)).ravel(), np.ones((1,n_pat)).ravel()]))
+          cv = np.array(cv)
+          suffix += '_paired'
+        else:
+          cv = np.array([[1, 1, -1, -1],[1, -1, 1, -1],[1, -1, -1, 1]])
         cm = np.array([[1,0,0], [0,1,0],[0,0,1]])
+        grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
         suffix += '_Ftest'
         suffix += '_group_by_hemi'
     else:
@@ -795,10 +827,11 @@ def create_contrast_vector(args):
             cv = np.array([[1, -1]])
             suffix += '_HC_minus_OCD'
             con_type = 't'
+        grp = np.concatenate([np.arange(n_con), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
 
-        cm = np.array([[1,0,0], [0,1,0],[0,0,1]])
+        cm = np.array([[1]])
         suffix += '_Ftest'
-    return cv.astype(int), cm.astype(int), suffix
+    return cv.astype(int), cm.astype(int), grp.astype(int), suffix
 
 
 def use_randomise(subjs, seed, metric, args=None):
@@ -818,28 +851,31 @@ def use_randomise(subjs, seed, metric, args=None):
     os.makedirs(out_dir, exist_ok=True)
     dm.to_csv(os.path.join(out_dir, 'design_mat'), sep=' ', index=False, header=False)
 
-    cv, cm, suffix = create_contrast_vector(args)
+    cv, cm, grp, suffix = create_contrast_vector(subjs, args)
     np.savetxt(os.path.join(out_dir, 'design_con'), cv, fmt='%i')
     np.savetxt(os.path.join(out_dir, 'design_fts'), cm, fmt='%i')
-    suffix += '_28062022'
+    np.savetxt(os.path.join(out_dir, 'design_grp'), grp, fmt='%i')
+    suffix += '_30062022'
     dmat = os.path.join(out_dir, 'design.mat')
     dcon = os.path.join(out_dir, 'design.con')
     dfts = os.path.join(out_dir, 'design.fts')
+    dgrp = os.path.join(out_dir, 'design.grp')
     os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_mat'), dmat))
     os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_con'), dcon))
     os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_fts'), dfts))
+    os.system('Text2Vest {} {}'.format(os.path.join(out_dir, 'design_grp'), dgrp))
 
     in_file = os.path.join(out_dir, seed+'_imgs_4D.nii.gz')
     nib.save(imgs_4D, in_file)
     mask_file = os.path.join(out_dir, seed+'_pathway_mask'+suffix+'.nii.gz')
-    _,_,mask = mask_imgs(flist,seed=seed, args=args)
+    _,_,mask = mask_imgs(flist, seed=seed, masks=[],  args=args)
     mask = resample_to_img(mask, imgs_4D, interpolation='nearest')
     nib.save(mask, mask_file)
 
 
     if args.use_TFCE:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix) #'_c'+str(int(args.cluster_thresh*10)))
-        cmd = 'randomise_parallel -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -f '+dfts+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -f '+dfts+' -e '+dgrp+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp --permuteBlocks'
         #cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -f '+dfts+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
     else:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix)
@@ -849,15 +885,15 @@ def use_randomise(subjs, seed, metric, args=None):
     os.system(cmd)
 
 
-def plot_randomise_outputs(seed, metric, args, stat='f'):
+def plot_randomise_outputs(subjs, seed, metric, args, stat='f'):
     """ plot the outcomes of the non-paramteric infernece using randomise and TFCE """
     locs = {'Acc':None,
             'dCaud':None,
             'dPut':None,
             'vPut':[-49,30,12]}
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
-    cv,cm,suffix = create_contrast_vector(args)
-    suffix += '_27062022'
+    cv,cm,grp,suffix = create_contrast_vector(subjs, args)
+    suffix += '_30062022'
     out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
 
     for i in np.arange(1,4):
@@ -966,6 +1002,7 @@ if __name__=='__main__':
     parser.add_argument('--within_mask_corr', default=False, action='store_true', help="compute FC within group masks and plot")
     parser.add_argument('--plot_within_group_masks', default=False, action='store_true', help="plot within-group masks used in second pass")
     parser.add_argument('--group_by_hemi', default=False, action='store_true', help="use a 4 columns design matrix with group by hemisphere interactions")
+    parser.add_argument('--paired_design', default=False, action='store_true', help="makes diagonal design matrix")
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -1020,7 +1057,7 @@ if __name__=='__main__':
         for subroi,metric in itertools.product(subrois,metrics):
             use_randomise(subjs, subroi, metric, args)
             if args.plot_figs:
-                plot_randomise_outputs(subroi, metric, args)
+                plot_randomise_outputs(subjs, subroi, metric, args)
 
     if args.run_second_level:
         out_dir = os.path.join(proj_dir, 'postprocessing', 'glm', pre_metric)
