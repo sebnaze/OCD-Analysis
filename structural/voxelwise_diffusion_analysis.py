@@ -22,6 +22,7 @@ import numpy as np
 import os
 import pickle
 import pandas as pd
+import platform
 import scipy
 from scipy.io import loadmat
 import seaborn as sbn
@@ -33,13 +34,22 @@ from time import time
 import warnings
 warnings.filterwarnings('once')
 
-# dirs
-proj_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline'
-lukeH_proj_dir = '/home/sebastin/working/lab_lucac/lukeH/projects/OCDbaseline'
+# get computer name to set paths
+if platform.node()=='qimr18844':
+    working_dir = '/home/sebastin/working/'
+elif 'hpcnode' in platform.node():
+    working_dir = '/mnt/lustre/working/'
+else:
+    print('Computer unknown! Setting working dir as /working')
+    working_dir = '/working/'
+
+# general paths
+proj_dir = os.path.join(working_dir, 'lab_lucac/sebastiN/projects/OCDbaseline')
+lukeH_proj_dir = os.path.join(working_dir, 'lab_lucac/lukeH/projects/OCDbaseline')
 code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 lukeH_deriv_dir = os.path.join(lukeH_proj_dir, 'data/derivatives')
-atlas_dir = '/home/sebastin/working/lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+atlas_dir = os.path.join(proj_dir, 'utils')
 
 atlas_cfg_path = os.path.join(atlas_dir, 'atlas_config.json')
 with open(atlas_cfg_path) as jsf:

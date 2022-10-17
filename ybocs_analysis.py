@@ -56,8 +56,8 @@ def create_dataframes(args):
     """ load XLS master file and currate into controls and patients pandas dataframes  """
     xls = pd.read_excel(os.path.join(proj_dir, 'data', xls_fname), sheet_name=['OCD Patients', 'Healthy Controls'])
 
-    df_pat = xls['OCD Patients'][['Participant_ID', 'Pre/Post/6mnth', 'Age', 'Gender(F=1,M=2)', 'Handedness(R=1,L=2)', 'YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total', 'Anx_total', 'Dep_Total', 'FSIQ-4_Comp_Score']]
-    df_pat = df_pat[df_pat['Pre/Post/6mnth']=='Pre'][['Participant_ID', 'Age', 'Gender(F=1,M=2)', 'Handedness(R=1,L=2)', 'YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total', 'Anx_total', 'Dep_Total', 'FSIQ-4_Comp_Score']]
+    df_pat = xls['OCD Patients'][['Participant_ID', 'Pre/Post/6mnth', 'Age', 'Gender(F=1,M=2)', 'Handedness(R=1,L=2)', 'YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total', 'Anx_total', 'Dep_Total', 'FSIQ-4_Comp_Score', 'Medications']]
+    df_pat = df_pat[df_pat['Pre/Post/6mnth']=='Pre'][['Participant_ID', 'Age', 'Gender(F=1,M=2)', 'Handedness(R=1,L=2)', 'YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total', 'Anx_total', 'Dep_Total', 'FSIQ-4_Comp_Score', 'Medications']]
 
     df_con = xls['Healthy Controls'][['Participant_ID', 'Age', 'Gender(F=1;M=2)', 'Handedness(R=1,L=2)', 'YBOCS_Total', 'OBQ_Total', 'HAMA_Total', 'MADRS_Total', 'OCIR_Total', 'Anx_total', 'Dep_Total', 'FSIQ-4_Comp_Score']]
     df_con['Gender(F=1;M=2)'] = df_con['Gender(F=1;M=2)'].replace([0], 2)
@@ -181,11 +181,15 @@ def print_ybocs_fc_relation(df):
             r,p = scipy.stats.pearsonr(df[e], df[y])
             print('{:20}  {:25}  r={:.3f}  p={:.3f}'.format(e, y, r, p))
 
+def get_df_voi_corr():
+    """ load dataframe of FC """
+    with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'rb') as f:
+        df_corr_voi = pickle.load(f)
+    return df_corr_voi
 
 def plot_corr_voi(df_pat, args=None):
     """ plot correlation (linear regression + pearson correlation and p-value) between FC and behavioral scores (Y-BOCS) """
-    with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'rb') as f:
-        df_corr_voi = pickle.load(f)
+    df_corr_voi = get_df_voi_corr()
 
     df_ybocs_corr = df_pat.merge(df_corr_voi[df_corr_voi['cohort']=='patients'])
     plt.rcParams.update({'font.size':16, 'axes.linewidth':1, 'font.family':['Arial'], 'pdf.fonttype': 42})
@@ -245,6 +249,26 @@ def plot_corr_voi_eigenvariate(df_pat, df_eigenvariate, args):
         if args.save_figs:
             plt.savefig(os.path.join(proj_dir, 'img', 'eigenvariate_{}_relation.pdf'.format(behav)), transparent=True)
 
+
+def get_drugfree_subjs(df_pat, args):
+    """ show stats of drug-free patients """
+    df_med = df_pat[(df_pat['Medications']!=9999)]
+    df_med = df_med[~df_med['subj'].str.contains('|'.join(args.revoked))][['subj', 'Medications']]
+    df_drugfree = df_med[df_med['Medications'].str.contains('Nil')]
+    return df_drugfree['subj']
+
+
+def plot_drugfree(args):
+    df_corr_voi = get_df_voi_corr()
+    df_corr_voi = df_corr_voi[~df_corr_voi['subj'].str.contains('|'.join(args.revoked))]
+    df_corr_voi['meds'] = ~df_corr_voi['subj'].str.contains('|'.join(args.drugfree))
+
+    sbn.swarmplot(data=df_corr_voi, y='corr', x='pathway', hue='meds', size=4)
+    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+
+    if args.save_figs:
+        plt.savefig(os.path.join(proj_dir, 'img', 'FC_drugfree.pdf'))
+
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
@@ -255,14 +279,15 @@ if __name__=='__main__':
     parser.add_argument('--print_ybocs_fc', default=False, action='store_true', help='Y-BOCS to SPM FC relation')
     parser.add_argument('--plot_corr_voi', default=False, action='store_true', help='plot relation between seed-to-VOI FC and behavioral measures')
     parser.add_argument('--plot_corr_voi_eigenvariate', default=False, action='store_true', help='plot relation between seed-to-VOI FC (eigenvariate) and behavioral measures')
+    parser.add_argument('--plot_drugfree', default=False, action='store_true', help='show medication taken and plot drug free subjs stats')
     args = parser.parse_args()
 
-    revoked=['sub-patient14', 'sub-patient15', 'sub-patient16', 'sub-patient29', 'sub-patient35', 'sub-patient51']
+    args.revoked=['sub-patient14', 'sub-patient15', 'sub-patient16', 'sub-patient29', 'sub-patient35', 'sub-patient51']
 
     df_con, df_pat = create_dataframes(args)
 
     if args.print_demographics:
-        print_demographics(df_con, df_pat, revoked)
+        print_demographics(df_con, df_pat, args.revoked)
 
     # relation to FC/SPM
     if args.print_ybocs_fc:
@@ -280,3 +305,7 @@ if __name__=='__main__':
 
     if args.plot_corr_voi_eigenvariate:
         plot_corr_voi_eigenvariate(df_pat, args)
+
+    if args.plot_drugfree:
+        args.drugfree = get_drugfree_subjs(df_pat, args)
+        plot_drugfree(args)

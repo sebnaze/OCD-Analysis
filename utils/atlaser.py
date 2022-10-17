@@ -18,9 +18,15 @@ import numpy as np
 import os
 import pandas as pd
 import scipy
+import socket
 import sys
 
 from IPython.core.debugger import set_trace
+
+if 'hpc' in socket.gethostname():
+    working_dir = '/working/'
+else:
+    working_dir = '/home/sebastin/working/'
 
 atlas_suffix = {'schaefer100_tianS1':'MNI_lps_mni.nii.gz', \
                 'schaefer200_tianS2':'MNI_lps_mni.nii.gz', \
@@ -31,7 +37,7 @@ class Atlaser:
     def __init__(self, atlas='schaefer100_tianS1'):
         """ Constructor: set default global variable for atlas """
         self.atlas_name = atlas
-        self.atlas_dir = '/home/sebastin/working/lab_lucac/sebastiN/projects/OCDbaseline/utils/'
+        self.atlas_dir = os.path.join(working_dir, 'lab_lucac/sebastiN/projects/OCDbaseline/utils/')
         self.atlas_cfg = pd.read_json(os.path.join(self.atlas_dir, 'atlas_config.json'))
         self.atlas_img = load_img(os.path.join(self.atlas_dir, self.atlas_name+atlas_suffix[atlas]))
         self.atlas_data = self.atlas_img.get_fdata()

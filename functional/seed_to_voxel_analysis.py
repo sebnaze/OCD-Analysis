@@ -4,7 +4,7 @@
 
 import argparse
 import bct
-import datetime
+from datetime import datetime
 import glob
 import gzip
 import h5py
@@ -60,7 +60,7 @@ lukeH_proj_dir = working_dir+'lab_lucac/lukeH/projects/OCDbaseline'
 code_dir = os.path.join(proj_dir, 'docs/code')
 deriv_dir = os.path.join(proj_dir, 'data/derivatives')
 lukeH_deriv_dir = os.path.join(lukeH_proj_dir, 'data/derivatives')
-atlas_dir = working_dir+'lab_lucac/shared/parcellations/qsirecon_atlases_with_subcortex/'
+atlas_dir = os.path.join(proj_dir, 'utils')
 
 # This section should be replaced with propper packaging one day
 sys.path.insert(0, os.path.join(code_dir, 'old'))
@@ -83,11 +83,14 @@ with open(atlas_cfg_path) as jsf:
 
 # Harrison 2009 seed locations:
 seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
-        'dPutL':[-28,1,3], 'dPutR':[28,1,3], \
-        'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3]} #, \
+        'dPutL':[-28,1,3], 'dPutR':[28,1,3]}#, \
+        #'vPutL':[-20,12,-3] , 'vPutR':[20,12,-3]} #, \
         #'dCaudL':[-13,15,9], 'dCaudR':[13,15,9]} #, \
         #'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
         #'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
+
+seed_suffix = { 'Harrison2009': 'ns_sphere_seed_to_voxel',
+                'TianS4':'seed_to_voxel'}
 
 cohorts = ['controls', 'patients']
 
@@ -101,24 +104,67 @@ cut_coords = {'Acc':[25,57,-6],
               'dPut':[50,11,19],
               'vPut':[-25,56,35]}
 
+jaspers_files = {'Acc': 'ProbMap_R_N3_ventromed.nii',
+                 'dPut': 'ProbMap_R_N3_putamen.nii',
+                 'vPut': 'ProbMap_R_N3_putamen.nii',
+                 'Caud': 'ProbMap_R_N3_caudate.nii'}
+
+hcp_files = {'Acc': 'Acc_fcmap_fwhm6_HCP_REST1_avg.nii',#'nac_mask_fcmap_avg.nii.gz',
+                 'dPut': 'dPut_fcmap_fwhm6_HCP_REST1_avg.nii', #'putamen_mask_fcmap_avg.nii.gz',
+                 'vPut': 'vPut_fcmap_fwhm6_HCP_REST1_avg.nii', #'putamen_mask_fcmap_avg.nii.gz',
+                 'dCaud': 'dCaud_fcmap_fwhm6_HCP_REST1_avg.nii'} #'caudate_mask_fcmap_avg.nii.gz'}
+
+result_files = {'HCP': {
+                    'Acc': {    'corrp': 'Acc_outputs_n5000_c35_group_by_hemi_Ftest_grp111_100hcpThr100SD_GM_23092022_clustere_corrp_tstat1.nii.gz',
+                                'tstat': 'Acc_outputs_n5000_c35_group_by_hemi_Ftest_grp111_100hcpThr100SD_GM_23092022_tstat1.nii.gz',
+                                'thr': 0.95 },
+                    'dPut': {   'corrp': 'dPut_outputs_n5000_c30_group_by_hemi_Ftest_grp111_100hcpThr275SD_GM_22092022_clustere_corrp_tstat1.nii.gz',
+                                'tstat': 'dPut_outputs_n5000_c30_group_by_hemi_Ftest_grp111_100hcpThr275SD_GM_22092022_tstat1.nii.gz',
+                                'thr': 0.95 } },
+                'Shephard': {
+                    'Acc': {    'corrp': 'Acc_outputs_n5000_TFCE_OCD_minus_HC_13062022_tfce_corrp_tstat1.nii.gz',
+                                'tstat': 'Acc_outputs_n5000_TFCE_OCD_minus_HC_13062022_tstat1.nii.gz',
+                                'thr': 0.95 },
+                    'dPut': {   'corrp': 'dPut_outputs_n5000_TFCE_HC_minus_OCD_13062022_tfce_corrp_tstat1.nii.gz',
+                                'tstat': 'dPut_outputs_n5000_TFCE_HC_minus_OCD_13062022_tstat1.nii.gz',
+                                'thr': 0.95 },
+                    'vPut': {   'corrp': 'vPut_outputs_n5000_TFCE_HC_minus_OCD_13062022_tfce_p_tstat1.nii.gz',
+                                'tstat': 'vPut_outputs_n5000_TFCE_HC_minus_OCD_13062022_tstat1.nii.gz',
+                                'thr': 0.995 } }
+                }
+
+
+
 def none_or_float(value):
     if value == 'None':
         return None
     return float(value)
 
-def create_design_matrix(subjs):
-    """ Create a simple group difference design matrix """
-    n_con = np.sum(['control' in s for s in subjs])
-    n_pat = np.sum(['patient' in s for s in subjs])
+def get_cohort(subj):
+    """ return cohort (control vs patient) of the subject """
+    if 'control' in subj:
+        return 'controls'
+    elif 'patient' in subj:
+        return 'patients'
+    else:
+        return 'none'
 
-    design_mat = np.zeros((n_con+n_pat,2), dtype=int)
-    design_mat[:n_con,0] = 1
-    design_mat[-n_pat:, 1] = 1
 
-    design_matrix = pd.DataFrame()
-    design_matrix['con'] = design_mat[:,0]
-    design_matrix['pat'] = design_mat[:,1]
-    return design_matrix
+def get_x_sym(img):
+    """ create a sagitally symetric image from the input img (assumed left hemisphere valued) """
+    affine = img.affine
+
+    def x_sym(inds):
+        r_x = inds + affine[0,-1]/affine[0,0] - 1
+        l_x = -r_x - affine[0,-1]/affine[0,0] - 1
+        return l_x.astype(int)
+
+    data = img.get_fdata().copy()
+    inds_r = np.array(np.where(data))
+    inds_l = np.apply_along_axis(x_sym, 0, inds_r)
+    data[tuple(inds_l)] = data[tuple(inds_r)]
+    nimg = new_img_like(img, data, copy_header=True)
+    return nimg
 
 def create_design_matrix(subjs, args):
     """ Create a more complex design matrix with group by hemisphere interactions """
@@ -141,7 +187,25 @@ def create_design_matrix(subjs, args):
 
         design_mat = np.eye((2*n_con+2*n_pat))
         design_matrix = pd.DataFrame(design_mat)
+      elif args.repeated2wayANOVA:
+        design_mat = np.zeros((2*n_con+2*n_pat, n_con+n_pat+2))
+        # subject means :
+        design_mat[:n_con,:n_con] = np.eye(n_con)
+        design_mat[n_con:2*n_con,:n_con] = np.eye(n_con)
+        design_mat[2*n_con:2*n_con+n_pat,n_con:n_con+n_pat] = np.eye(n_pat)
+        design_mat[2*n_con+n_pat:,n_con:n_con+n_pat] = np.eye(n_pat)
+        # session main effect:
+        design_mat[:n_con,-2] = 1
+        design_mat[n_con:2*n_con,-2] = -1
+        design_mat[-2*n_pat:-n_pat,-2] = 1
+        design_mat[-n_pat:,-2] = -1
+        # group by session interaction
+        design_mat[:n_con,-1] = 1
+        design_mat[n_con:2*n_con,-1] = -1
+        design_mat[-2*n_pat:-n_pat,-1] = -1
+        design_mat[-n_pat:,-1] = 1
 
+        design_matrix = pd.DataFrame(design_mat)
       else:
         design_mat = np.zeros((2*(n_con+n_pat),4), dtype=int)
 
@@ -155,8 +219,19 @@ def create_design_matrix(subjs, args):
         design_matrix['HC_R'] = design_mat[:,1]
         design_matrix['OCD_L'] = design_mat[:,2]
         design_matrix['OCD_R'] = design_mat[:,3]
-    else:
-        design_matrix = create_design_matrix(subjs)
+
+    else:  # Create a simple group difference design matrix
+        n_con = np.sum(['control' in s for s in subjs])
+        n_pat = np.sum(['patient' in s for s in subjs])
+
+        design_mat = np.zeros((n_con+n_pat,2), dtype=int)
+        design_mat[:n_con,0] = 1
+        design_mat[-n_pat:, 1] = 1
+
+        design_matrix = pd.DataFrame()
+        design_matrix['con'] = design_mat[:,0]
+        design_matrix['pat'] = design_mat[:,1]
+
     return design_matrix
 
 
@@ -376,6 +451,15 @@ def resample_masks(masks):
         out_masks.append(resample_to_img(mask, ref_mask, interpolation='nearest'))
     return out_masks
 
+def inflate_mask(mask, args):
+    """ inflate mask using a kernel of n_vox voxels """
+    data = mask.get_fdata().copy()
+    n = args.n_inflate + 1
+    kernel = np.ones((n, n, n))
+    new_data = scipy.signal.convolve(data, kernel, method='direct', mode='same')
+    new_mask = binarize_img(new_img_like(mask, np.abs(new_data)))
+    return new_mask
+
 def mask_imgs(flist, masks=[], seed=None, args=None):
     """ mask input images using intersection of template masks and pre-computed within-groups union mask """
     # mask images to improve SNR
@@ -398,9 +482,24 @@ def mask_imgs(flist, masks=[], seed=None, args=None):
         atlazer = atlaser.Atlaser(atlas='schaefer400_tianS4')
         frontal_atlas = atlazer.create_subatlas_img(rois=pathway_mask[seed])
         masks.append(binarize_img(frontal_atlas))
+    if args.use_jaspers_mask:
+        fname = os.path.join(proj_dir, 'utils', 'ProbabilityMaps_CorticoStriatalConnectivity_RightStriatum', jaspers_files[seed])
+        mask = binarize_img(fname, threshold=args.jaspers_thr)
+        masks.append(get_x_sym(mask))
+    if args.use_hcp_mask:
+        fname = os.path.join(proj_dir, 'utils', hcp_files[seed])
+        img = load_img(fname)
+        data = img.get_fdata().copy()
+        data[np.isnan(data)] = 0
+        data = data[data!=0]
+        sigma = np.std(data)
+        mask = binarize_img(fname, threshold=args.hcp_sd_thr*sigma)
+        masks.append(mask)
     if masks != []:
         masks = resample_masks(masks)
         mask = nilearn.masking.intersect_masks(masks, threshold=1, connected=False) # thr=1 : intersection; thr=0 : union
+        if args.inflate_mask:
+            mask = inflate_mask(mask, args)
         masker = NiftiMasker(mask)
         masker.fit(imgs=list(flist))
         masker.generate_report() # use for debug
@@ -560,6 +659,12 @@ def run_second_level(subjs, metrics, subrois, args):
     return glm_results
 
 
+def get_voi_mask(seed, args):
+    """ create VOI mask from corrected p-value contrast from randomise """
+    fname = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/', 'smoothed_but_sphere_seed_based', args.metrics[0],
+                            'brainFWHM{}mm'.format(int(args.brain_smoothing_fwhm)), seed, 'randomise', result_files[args.deriv_mask][seed]['corrp'])
+    return binarize_img(fname, threshold=result_files[args.deriv_mask][seed]['thr'])
+
 def compute_voi_corr(subjs, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
     """ compute correlation between seed and VOI for each pathway, to extract p-values, effect size, etc. """
     dfs = []
@@ -577,7 +682,8 @@ def compute_voi_corr(subjs, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 
                                     metric, fwhm, seed, cohort, fname))
                 # load voi mask
                 #voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', subj, 'spm/masks', 'local_'+'_'.join([voi, metric])+'.nii'))
-                voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', 'SPM', 'seeds_and_rois', voi+'_sphere3mm.nii.gz'))
+                #voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', 'SPM', 'seeds_and_rois', voi+'_sphere3mm.nii.gz'))
+                voi_mask = get_voi_mask(seed, args)
                 voi_mask = resample_to_img(voi_mask, corr_map, interpolation='nearest')
 
                 # extract correlations
@@ -594,8 +700,8 @@ def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R
     colors = ['lightgrey', 'darkgrey']
     sbn.set_palette(colors)
     plt.rcParams.update({'font.size': 20, 'axes.linewidth':2})
-    ylim = [-0.15, 0.3]
-    fig = plt.figure(figsize=[12,6])
+    ylim = [-0.52, 0.52]
+    fig = plt.figure(figsize=[4*len(seeds),6])
     df_voi_corr['corr'] = df_voi_corr['corr'] / 880.
     df_voi_corr['corr'].loc[df_voi_corr['corr']>1] = 1
     df_voi_corr['corr'].loc[df_voi_corr['corr']<-1] = -1
@@ -604,10 +710,13 @@ def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R
     #               inner='quartile', dodge=True, width=0.8, cut=0)
     for i,(seed,voi) in enumerate(zip(seeds, vois)):
       ax = plt.subplot(1,len(seeds),i+1)
-      sbn.barplot(data=df_voi_corr[df_voi_corr['pathway']=='_'.join([seed,voi])], y='corr', x='pathway', hue='cohort', orient='v')
+      #sbn.barplot(data=df_voi_corr[df_voi_corr['pathway']=='_'.join([seed,voi])], y='corr', x='pathway', hue='cohort', orient='v')
+      sbn.boxplot(data=df_voi_corr[df_voi_corr['pathway']=='_'.join([seed,voi])], y='corr', x='pathway', hue='cohort', orient='v', dodge=True, showfliers=False)
+      sbn.swarmplot(data=df_voi_corr[df_voi_corr['pathway']=='_'.join([seed,voi])], y='corr', x='pathway', hue='cohort', orient='v', dodge=True, alpha=0.7, edgecolor='black', linewidth=1)
       ax.spines['top'].set_visible(False)
       ax.spines['right'].set_visible(False)
       ax.tick_params(width=2)
+      ax.set_ylim(ylim)
       if i==len(seeds)-1:
         plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
       else:
@@ -615,7 +724,7 @@ def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R
       plt.tight_layout()
 
     if args.save_figs:
-        figname = 'seed_to_voi_FC_3pathways_sphere3mm.svg'
+        figname = 'seeds_to_vois_FC_'+args.deriv_mask+datetime.now().strftime('_%d%m%Y')+'.svg'
         plt.savefig(os.path.join(proj_dir, 'img', figname))
         #plt.savefig(os.path.join('/home/sebastin/tmp/', figname))
 
@@ -760,15 +869,15 @@ def plot_within_mask_corr(df_mask_corr, seeds = ['Acc', 'dPut', 'vPut'], args=No
         plt.savefig(os.path.join(proj_dir, 'img', figname))
 
 
-def get_file_lists(subjs, seed, metric, args):
+def get_file_lists(subjs, seed, metric, atlas, args):
     """ returns 3 file lists corresponding to controls, patients, and combined
     controls+patients paths of imgs to process """
     # naming convention in file system
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
+    con_flist = []
+    pat_flist = []
     # get images path
     if args.group_by_hemi:
-        con_flist = []
-        pat_flist = []
         for hemi in ['L', 'R']:
             cl = np.sort(glob.glob(os.path.join(args.in_dir, metric, fwhm, seed+hemi, 'controls', '*')))
             con_flist.append(cl)
@@ -776,13 +885,40 @@ def get_file_lists(subjs, seed, metric, args):
             pat_flist.append(pl)
         con_flist = np.concatenate(con_flist)
         pat_flist = np.concatenate(pat_flist)
+
+        # remove revoked subjects -- do controls and patients separately on purpose
+        if args.revoked != []:
+            con_flist = [l for l in con_flist if ~np.any([s in l for s in args.revoked])]
+            pat_flist = [l for l in pat_flist if ~np.any([s in l for s in args.revoked])]
+
+    # case where interactions are precomputed as L-R, only do group diff
+    elif args.group_by_hemi_precomputed:
+        for subj in subjs:
+            if subj not in args.revoked:
+                coh = get_cohort(subj)
+                L_img = os.path.join(args.in_dir, metric, fwhm, seed+'L', coh,
+                                        '_'.join([subj,metric,fwhm,atlas,seed+'L',seed_suffix[args.seed_type],'corr.nii']))
+                R_img = os.path.join(args.in_dir, metric, fwhm, seed+'R', coh,
+                                        '_'.join([subj,metric,fwhm,atlas,seed+'R',seed_suffix[args.seed_type],'corr.nii']))
+                sub_img = math_img('img1 - img2', img1=L_img, img2=R_img)
+                if 'control' in coh:
+                    con_flist.append(sub_img)
+                elif 'patient' in coh:
+                    pat_flist.append(sub_img)
+                else:
+                    continue;
+
     else:
         con_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'controls', '*'))
         pat_flist = glob.glob(os.path.join(args.in_dir, metric, fwhm, seed, 'patients', '*'))
-    # remove revoked subjects -- do controls and patients separately on purpose
-    if args.revoked != []:
-        con_flist = [l for l in con_flist if ~np.any([s in l for s in revoked])]
-        pat_flist = [l for l in pat_flist if ~np.any([s in l for s in revoked])]
+
+        # remove revoked subjects -- do controls and patients separately on purpose
+        if args.revoked != []:
+            con_flist = [l for l in con_flist if ~np.any([s in l for s in args.revoked])]
+            pat_flist = [l for l in pat_flist if ~np.any([s in l for s in args.revoked])]
+
+    con_flist = np.array(con_flist)
+    pat_flist = np.array(pat_flist)
     flist = np.hstack([con_flist, pat_flist])
     return con_flist, pat_flist, flist
 
@@ -793,14 +929,7 @@ def create_contrast_vector(subjs, args):
     n_con = np.sum(['control' in s for s in subjs])
     n_pat = np.sum(['patient' in s for s in subjs])
     if args.group_by_hemi:
-        if args.OCD_minus_HC:
-            cv = np.array([[-1, 1, 1, -1]])
-            suffix += '_OCD_minus_HC'
-            con_type = 't'
-        else:
-            cv = np.array([[1, -1, 1, -1]])
-            suffix += '_HC_minus_OCD'
-            con_type = 't'
+        suffix += '_group_by_hemi'
         if args.paired_design:
           cv = []
           #cv.append(np.ones([1,1+n_con+n_pat]))
@@ -812,12 +941,36 @@ def create_contrast_vector(subjs, args):
           cv.append(np.concatenate([np.ones((1,n_con)).ravel(), -np.ones((1,n_con)).ravel(), -np.ones((1,n_pat)).ravel(), np.ones((1,n_pat)).ravel()]))
           cv = np.array(cv)
           suffix += '_paired'
+        elif args.repeated2wayANOVA:
+          cv = np.zeros( (1, n_con + n_pat + 2) ) # 3 contrasts (one positive + one negative each)
+          # group main effect
+          cv[0,:n_con] = 1
+          cv[0,n_con:n_pat] = -1
+          #cv[1,:n_con] = -1
+          #cv[1,n_con:n_pat] = 1
+          # session  main effect
+          #cv[2,-2] = 1
+          #cv[3,-2] = -1
+          # interactions
+          #cv[4,-1] = 1
+          #cv[5,-1] = -1
+          # F test
+          #cm = np.array([[1,0,0,0,0,0], [0,1,0,0,0,0], [0,0,1,0,0,0], [0,0,0,1,0,0], [0,0,0,0,1,0], [0,0,0,0,0,1]])
+          cm = np.array([[1]])
+          grp = np.ones((2*n_con+2*n_pat,1))
+          #grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
+          suffix += '_repeated2wayANOVA_grp111'
         else:
-          cv = np.array([[1, 1, -1, -1],[1, -1, 1, -1],[1, -1, -1, 1]])
-        cm = np.array([[1,0,0], [0,1,0],[0,0,1]])
-        grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
-        suffix += '_Ftest'
-        suffix += '_group_by_hemi'
+          cv = np.array([[1, 1, -1, -1]])
+          cm = np.array([[1]])
+          grp = np.ones((2*n_con+2*n_pat,1))
+          #grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
+        suffix += '_Ftest_grp111'
+    elif args.group_by_hemi_precomputed:
+        cv = np.array([[1,-1], [-1, 1]])
+        grp = np.ones((n_con+n_pat,1))
+        cm = np.array([[1,0], [0,1]])
+        suffix += 'group_by_hemi_precomputed'
     else:
         if args.OCD_minus_HC:
             cv = np.array([[-1, 1]])
@@ -828,16 +981,14 @@ def create_contrast_vector(subjs, args):
             suffix += '_HC_minus_OCD'
             con_type = 't'
         grp = np.concatenate([np.arange(n_con), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
-
-        cm = np.array([[1]])
         suffix += '_Ftest'
     return cv.astype(int), cm.astype(int), grp.astype(int), suffix
 
 
-def use_randomise(subjs, seed, metric, args=None):
+def use_randomise(subjs, seed, metric, atlas, args=None):
     """ perform non-parametric inference using FSL randomise and cluster-based enhancement """
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
-    _,_,flist = get_file_lists(subjs, seed, metric, args)
+    _,_,flist = get_file_lists(subjs, seed, metric, atlas, args)
     # create 4D image from list of 3D
     imgs_4D = nilearn.image.concat_imgs(flist, auto_resample=True)
     dm = create_design_matrix(subjs, args)
@@ -855,7 +1006,19 @@ def use_randomise(subjs, seed, metric, args=None):
     np.savetxt(os.path.join(out_dir, 'design_con'), cv, fmt='%i')
     np.savetxt(os.path.join(out_dir, 'design_fts'), cm, fmt='%i')
     np.savetxt(os.path.join(out_dir, 'design_grp'), grp, fmt='%i')
-    suffix += '_30062022'
+    if args.use_jaspers_mask:
+        suffix += '_jaspersThr{}'.format(int(args.jaspers_thr))
+    if args.use_hcp_mask:
+        suffix += '_100hcpThr{}SD'.format(int(args.hcp_sd_thr*100))
+    if args.use_fspt_mask:
+        suffix += '_FSPT'
+    if args.use_cortical_mask:
+        suffix += '_GM'
+    if args.use_frontal_mask:
+        suffix += '_Fr'
+    if args.inflate_mask:
+        suffix += '_inflateAll{}mm'.format(int(args.n_inflate))
+    suffix += '_'+datetime.now().strftime('%d%m%Y')
     dmat = os.path.join(out_dir, 'design.mat')
     dcon = os.path.join(out_dir, 'design.con')
     dfts = os.path.join(out_dir, 'design.fts')
@@ -875,17 +1038,17 @@ def use_randomise(subjs, seed, metric, args=None):
 
     if args.use_TFCE:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix) #'_c'+str(int(args.cluster_thresh*10)))
-        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -f '+dfts+' -e '+dgrp+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp --permuteBlocks'
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -f '+dfts+' -e '+dgrp+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
         #cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -f '+dfts+' -m '+mask_file+' -n '+str(args.n_perm)+' -T --uncorrp'
     else:
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix)
-        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -'+con_type+' '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
+        cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
     print(cmd)
     #pdb.set_trace()
     os.system(cmd)
 
 
-def plot_randomise_outputs(subjs, seed, metric, args, stat='f'):
+def plot_randomise_outputs(subjs, seed, metric, args, stat='t'):
     """ plot the outcomes of the non-paramteric infernece using randomise and TFCE """
     locs = {'Acc':None,
             'dCaud':None,
@@ -893,10 +1056,22 @@ def plot_randomise_outputs(subjs, seed, metric, args, stat='f'):
             'vPut':[-49,30,12]}
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
     cv,cm,grp,suffix = create_contrast_vector(subjs, args)
-    suffix += '_30062022'
+    if args.use_jaspers_mask:
+        suffix += '_jaspersThr{}'.format(int(args.jaspers_thr))
+    if args.use_hcp_mask:
+        suffix += '_100hcpThr{}SD'.format(int(args.hcp_sd_thr*100))
+    if args.use_fspt_mask:
+        suffix += '_FSPT'
+    if args.use_cortical_mask:
+        suffix += '_GM'
+    if args.use_frontal_mask:
+        suffix += '_Fr'
+    if args.inflate_mask:
+        suffix += '_inflateAll{}mm'.format(int(args.n_inflate))
+    suffix += '_22092022'
     out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
 
-    for i in np.arange(1,4):
+    for i in np.arange(1,2):
         if args.use_TFCE:
             out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_corrp_'+stat+'stat{}.nii.gz'.format(i))
         else:
@@ -906,10 +1081,10 @@ def plot_randomise_outputs(subjs, seed, metric, args, stat='f'):
 
         # FWE p-values
         ax1 = plt.subplot(3,2,1)
-        plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' randomise -- {} \n corrp {}'.format(suffix[1:], stat))
+        plot_stat_map(out_file, axes=ax1, draw_cross=False, title=seed+' randomise -- corrp {}stat{}'.format(stat,i))
         ax2 = plt.subplot(3,2,2)
         plot_stat_map(out_file, threshold=0.95, axes=ax2, draw_cross=False, cmap='Oranges',
-                        title=seed+' randomise -- {} -- corrp>0.95 (p<0.05)'.format(suffix[1:]),
+                        title=seed+' randomise -- {}stat{} -- corrp>0.95 (p<0.05)'.format(stat,i),
                         cut_coords=locs[seed])
 
         # stats
@@ -918,32 +1093,20 @@ def plot_randomise_outputs(subjs, seed, metric, args, stat='f'):
         else:
             out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+'_{}stat{}.nii.gz'.format(stat,i))
         ax3 = plt.subplot(3,2,3)
-        plot_stat_map(out_file, axes=ax3, draw_cross=False, title=seed+' randomise -- {} \n {}stat{}'.format(suffix[1:],stat,i))
+        plot_stat_map(out_file, axes=ax3, draw_cross=False, title=seed+' randomise -- {}stat{}'.format(stat,i))
         ax4 = plt.subplot(3,2,4)
-        plot_stat_map(out_file, threshold=args.cluster_thresh, axes=ax4, draw_cross=False, cmap='Oranges', title=seed+' randomise -- {} -- {}stat{}>{:.1f}'.format(suffix[1:],stat,i,args.cluster_thresh))
+        plot_stat_map(out_file, threshold=args.cluster_thresh, axes=ax4, draw_cross=False, title=seed+' randomise -- {}stat{}>{:.1f}'.format(stat,i,args.cluster_thresh))
 
         # FDR p-vals
         if args.use_TFCE:
             out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_TFCE'+suffix+'_tfce_p_{}stat{}.nii.gz'.format(stat,i))
         else:
             out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix+'_p_{}stat{}.nii.gz'.format(stat,i))
-        plt.figure(figsize=[16,4])
         ax5 = plt.subplot(3,2,5)
         plot_stat_map(out_file, axes=ax5, draw_cross=False, title=seed+' p_unc '+stat)
         ax6 = plt.subplot(3,2,6)
         plot_stat_map(out_file, threshold=0.999, axes=ax6, draw_cross=False, cmap='Oranges', title=seed+' p_unc<0.001 '+stat)
-"""
-    img = load_img(out_file)
-    data = img.get_fdata().copy()
-    nz_inds = np.nonzero(data)
-    p_unc = 1 - data[nz_inds]
-    sinds_p_unc = np.argsort(p_unc)
-    reject, p_fdr, _, _ = multitest.multipletests(p_unc, alpha=0.05, method='fdr_bh')
-    # put FDR corrected pvals back in place
-    data[nz_inds] = 1 - p_fdr
-    fdr_img = new_img_like(img, data)
-    plot_stat_map(fdr_img, threshold=0.9, draw_cross=False, cmap='Oranges', title=seed+' p_fdr<0.1 '+stat)
-"""
+
 
 def plot_within_group_masks(subrois, glm_results, args):
     """ display maps of within-group contrasts """
@@ -1002,7 +1165,15 @@ if __name__=='__main__':
     parser.add_argument('--within_mask_corr', default=False, action='store_true', help="compute FC within group masks and plot")
     parser.add_argument('--plot_within_group_masks', default=False, action='store_true', help="plot within-group masks used in second pass")
     parser.add_argument('--group_by_hemi', default=False, action='store_true', help="use a 4 columns design matrix with group by hemisphere interactions")
+    parser.add_argument('--group_by_hemi_precomputed', default=False, action='store_true', help="simplified 2 columns design matrix where L-R diff is precomputed")
+    parser.add_argument('--repeated2wayANOVA', default=False, action='store_true', help="2 way ANOVA with repeated measures")
     parser.add_argument('--paired_design', default=False, action='store_true', help="makes diagonal design matrix")
+    parser.add_argument('--use_jaspers_mask', default=False, action='store_true', help='use a seed-specific mask from Jaspers et al. corticostriatal probability maps')
+    parser.add_argument('--jaspers_thr', default=50., type=none_or_float, action='store', help='Probability Map threshold to create seed specific mask')
+    parser.add_argument('--use_hcp_mask', default=False, action='store_true', help='use a seed-specific mask from HCP corticostriatal probability maps')
+    parser.add_argument('--hcp_sd_thr', default=1., type=none_or_float, action='store', help='Probability Map threshold (in SD of values) to create seed specific mask with HCP')
+    parser.add_argument('--inflate_mask', default=False, action='store_true', help='inflate the cortical mask by n mm to be more conservative')
+    parser.add_argument('--n_inflate', default=1, type=int, action='store', help='number of mm to inflate mask')
     args = parser.parse_args()
 
     if args.subj!=None:
@@ -1020,11 +1191,18 @@ if __name__=='__main__':
     args.pre_metric = pre_metric
     args.metrics = metrics
 
+    # to compute the correlation between VOIs, choose which mask to use
+    if args.use_hcp_mask:
+        args.deriv_mask = 'HCP'
+    else:
+        args.deriv_mask = 'Shephard'
+
     #TODO: in_dir must be tailored to the atlas. ATM everything is put in Harrison2009 folder
     args.in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/', args.seed_type+'Rep', pre_metric)
 
     seeds = list(seed_loc.keys()) #['AccL', 'AccR', 'dCaudL', 'dCaudR', 'dPutL', 'dPutR', 'vPutL', 'vPutR', 'vCaudSupL', 'vCaudSupR', 'drPutL', 'drPutR']
     subrois = np.unique([seed[:-1] for seed in seeds])#['Acc', 'dCaud', 'dPut', 'vPut', 'drPut']
+    vois = [s+'CtxVOI' for s in subrois]
 
 
     seedfunc = {'Harrison2009':sphere_seed_to_voxel,
@@ -1054,8 +1232,8 @@ if __name__=='__main__':
 
     # use randomise (independent from prep_fsl_randomise)
     if args.use_randomise:
-        for subroi,metric in itertools.product(subrois,metrics):
-            use_randomise(subjs, subroi, metric, args)
+        for subroi,metric,atlas in itertools.product(subrois,metrics, atlases):
+            use_randomise(subjs, subroi, metric, atlas, args)
             if args.plot_figs:
                 plot_randomise_outputs(subjs, subroi, metric, args)
 
@@ -1069,9 +1247,9 @@ if __name__=='__main__':
             plot_within_group_masks(subrois, glm_results, args)
 
     if args.compute_voi_corr:
-        df_voi_corr = compute_voi_corr(subjs, args=args)
-        print_voi_stats(df_voi_corr, args=args)
-        plot_voi_corr(df_voi_corr, args=args)
+        df_voi_corr = compute_voi_corr(subjs, seeds=subrois, vois=vois, args=args)
+        print_voi_stats(df_voi_corr, seeds=subrois, vois=vois, args=args)
+        plot_voi_corr(df_voi_corr, seeds=subrois, vois=vois, args=args)
 
         if args.save_outputs:
             with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'wb') as f:
