@@ -89,31 +89,37 @@ seed_loc = {'AccL':[-9,9,-8], 'AccR':[9,9,-8], \
         #'vCaudSupL':[-10,15,0], 'vCaudSupR':[10,15,0], \
         #'drPutL':[-25,8,6], 'drPutR':[25,8,6]}
 
+# FC file suffix
 seed_suffix = { 'Harrison2009': 'ns_sphere_seed_to_voxel',
                 'TianS4':'seed_to_voxel'}
 
 cohorts = ['controls', 'patients']
 
+# pathwa masks induced from Shephard et al. 2021
 pathway_mask = {'Acc':['OFC', 'PFClv', 'PFCv'],
                 'dCaud':['PFCd_', 'PFCmp', 'PFCld_'],
                 'dPut':['Ins', 'SomMotB_S2'], #'PFCld_''PFCl_',
                 'vPut':['PFCl_', 'PFCm']} #'PFCd'
 
+# cluster location for ortho-view visualization
 cut_coords = {'Acc':[25,57,-6],
               'dCaud':None,
               'dPut':[50,11,19],
               'vPut':[-25,56,35]}
 
+# frontal striatal pathway (single hemiphere, left only provided]) from Jaspers et al.
 jaspers_files = {'Acc': 'ProbMap_R_N3_ventromed.nii',
                  'dPut': 'ProbMap_R_N3_putamen.nii',
                  'vPut': 'ProbMap_R_N3_putamen.nii',
                  'Caud': 'ProbMap_R_N3_caudate.nii'}
 
+# fronto-striatal pathway based on Di Martino seeds, based on HCP
 hcp_files = {'Acc': 'Acc_fcmap_fwhm6_HCP_REST1_avg.nii',#'nac_mask_fcmap_avg.nii.gz',
                  'dPut': 'dPut_fcmap_fwhm6_HCP_REST1_avg.nii', #'putamen_mask_fcmap_avg.nii.gz',
                  'vPut': 'vPut_fcmap_fwhm6_HCP_REST1_avg.nii', #'putamen_mask_fcmap_avg.nii.gz',
                  'dCaud': 'dCaud_fcmap_fwhm6_HCP_REST1_avg.nii'} #'caudate_mask_fcmap_avg.nii.gz'}
 
+# results summary files for visualization. Note threshold for p-values is different when FWE-corrected (0.05) that uncorrected (0.005)
 result_files = {'HCP': {
                     'Acc': {    'corrp': 'Acc_outputs_n5000_c35_group_by_hemi_Ftest_grp111_100hcpThr100SD_GM_23092022_clustere_corrp_tstat1.nii.gz',
                                 'tstat': 'Acc_outputs_n5000_c35_group_by_hemi_Ftest_grp111_100hcpThr100SD_GM_23092022_tstat1.nii.gz',
@@ -151,7 +157,10 @@ def get_cohort(subj):
 
 
 def get_x_sym(img):
-    """ create a sagitally symetric image from the input img (assumed left hemisphere valued) """
+    """ create a sagitally symetric image from the input img (assumed left hemisphere valued)
+        ---
+        used to create bilateral mask from unilateral maps given by Jaspers et al.
+    """
     affine = img.affine
 
     def x_sym(inds):
@@ -172,7 +181,7 @@ def create_design_matrix(subjs, args):
       n_con = np.sum(['control' in s for s in subjs])
       n_pat = np.sum(['patient' in s for s in subjs])
       if args.paired_design:
-        """design_mat = np.zeros((2*(n_con+n_pat),1+n_con+n_pat), dtype=int)
+        design_mat = np.zeros((2*(n_con+n_pat),1+n_con+n_pat), dtype=int)
         design_mat[:2*n_con,0] = 1
         design_mat[-2*n_pat,0] = -1
         design_mat[:n_con,1:n_con+1] = np.eye(n_con)
@@ -183,10 +192,8 @@ def create_design_matrix(subjs, args):
         design_matrix = pd.DataFrame()
         design_matrix['group'] = design_mat[:,0]
         for i,subj in enumerate(subjs):
-          design_matrix[subj] = design_mat[:,i+1]"""
+          design_matrix[subj] = design_mat[:,i+1]
 
-        design_mat = np.eye((2*n_con+2*n_pat))
-        design_matrix = pd.DataFrame(design_mat)
       elif args.repeated2wayANOVA:
         design_mat = np.zeros((2*n_con+2*n_pat, n_con+n_pat+2))
         # subject means :
@@ -236,7 +243,7 @@ def create_design_matrix(subjs, args):
 
 
 def seed_to_voxel(subj, seeds, metrics, atlases, smoothing_fwhm=8.):
-    """ perform seed-to-voxel analysis of bold data """
+    """ perform seed-to-voxel analysis of bold data -- based on ROIs (e.g. using Tian subcortical parcellation)"""
     # prepare output directory
     out_dir = os.path.join(proj_dir, 'postprocessing', subj)
     if not os.path.exists(out_dir):
@@ -276,7 +283,7 @@ def seed_to_voxel(subj, seeds, metrics, atlases, smoothing_fwhm=8.):
     print('{} seed_to_voxel performed in {}s'.format(subj,int(time()-t0)))
 
 
-# TODO: should refactor this function, only a few lines changed from the one above
+
 def sphere_seed_to_voxel(subj, seeds, metrics, atlases=['Harrison2009'], args=None):
     """ perform seed-to-voxel analysis of bold data using Harrison2009 3.5mm sphere seeds"""
     # prepare output directory
@@ -310,7 +317,7 @@ def sphere_seed_to_voxel(subj, seeds, metrics, atlases=['Harrison2009'], args=No
             nib.save(seed_to_voxel_corr_img, os.path.join(out_dir, fname))
     print('{} seed_to_voxel correlation performed in {}s'.format(subj,int(time()-t0)))
 
-# TODO: adapt to Tian parcellatin, atm works only for Harrison2009 preprocessing
+
 def merge_LR_hemis(subjs, seeds, metrics, seed_type='sphere_seed_to_voxel', atlas='Harrison2009', args=None):
     """ merge the left and right correlation images for each seed in each subject """
     hemis = ['L', 'R']
@@ -337,7 +344,9 @@ def merge_LR_hemis(subjs, seeds, metrics, seed_type='sphere_seed_to_voxel', atla
 
 
 def prep_fsl_randomise(in_fnames, seeds, metrics, args):
-    """ prepare 4D images for FSL randomise """
+    """ prepare 4D images for FSL randomise
+    Note: deprecated. use of FSL randomise is now integrated in function use_randomise(...)
+    """
     gm_mask = datasets.load_mni152_gm_mask()
     masker = NiftiMasker(gm_mask)
 
@@ -393,6 +402,9 @@ def unzip_correlation_maps(subjs, metrics, atlases, seeds, args):
 
 
 def get_subjs_after_scrubbing(subjs, metrics, min_time=5):
+    """ return list of subjects (in dataframe) with more than min_time left after scrubbing.
+        Also returns the subjects discarded.
+    """
     scrub_key = 'scrubbed_length_min'
     scrub_thr = min_time
     proc_dir = 'post-fmriprep-fix'
@@ -514,7 +526,9 @@ def mask_imgs(flist, masks=[], seed=None, args=None):
     return imgs, masker, mask
 
 def perform_second_level_analysis(seed, metric, design_matrix, cohorts=['controls', 'patients'], args=None, masks=[]):
-    """ Perform second level analysis based on seed-to-voxel correlation maps """
+    """ Perform second level analysis based on seed-to-voxel correlation maps
+        Note: for use of non-parametric approach (randomise) rather than paramteric, see use_randomise(...)
+    """
     # naming convention in file system
     fwhm = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
 
@@ -569,10 +583,14 @@ def create_within_group_mask(subroi_glm_results, args):
 
 
 def run_second_level(subjs, metrics, subrois, args):
-    """ Run second level analysis """
+    """ Run second level analysis (parametric approach).
+        Can be done in one or two passes, depending of what masking strategy used.
+        One pass: independent masks (i.e. HCP or Shephard derived)
+        Two passes: compute second level mask based on group-level stats (a la Harrison et al. 2009)
+    """
     design_matrix = create_design_matrix(subjs)
 
-    glm_results = dict()
+    glm_results = dict() # to store the outputs
     for metric,subroi in itertools.product(metrics,subrois):
         print('Starting 2nd level analysis for '+subroi+' subroi.')
         t0 = time()
@@ -598,12 +616,7 @@ def run_second_level(subjs, metrics, subrois, args):
 
             passes.append('second_pass')
 
-        # Correcting the p-values for multiple testing and taking negative logarithm
-        #neg_log_pval = nilearn.image.math_img("-np.log10(np.maximum(1, img * {}))"
-        #                .format(str(glm_results[subroi]['n_voxels'])),
-        #                img=glm_results[subroi]['contrasts']['between']['p_value'])
-        #glm_results[subroi]['neg_log_pval'] = neg_log_pval
-
+        # extracts and prints stats, clusters, etc.
         t_thr = time()
         for pss in passes:
             glm_results[subroi][(pss,'fpr',args.fpr_threshold,'thresholded_img')], \
@@ -624,6 +637,7 @@ def run_second_level(subjs, metrics, subrois, args):
 
         print('Thresholding and clustering took {:.2f}s'.format(time()-t_thr))
 
+        # show contrasts with significant clusters
         if args.plot_figs:
             t_plt = time()
             for pss in passes:
@@ -681,8 +695,6 @@ def compute_voi_corr(subjs, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 
                 corr_map = load_img(os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/seed_not_smoothed',
                                     metric, fwhm, seed, cohort, fname))
                 # load voi mask
-                #voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', subj, 'spm/masks', 'local_'+'_'.join([voi, metric])+'.nii'))
-                #voi_mask = load_img(os.path.join(proj_dir, 'postprocessing', 'SPM', 'seeds_and_rois', voi+'_sphere3mm.nii.gz'))
                 voi_mask = get_voi_mask(seed, args)
                 voi_mask = resample_to_img(voi_mask, corr_map, interpolation='nearest')
 
@@ -726,7 +738,6 @@ def plot_voi_corr(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R
     if args.save_figs:
         figname = 'seeds_to_vois_FC_'+args.deriv_mask+datetime.now().strftime('_%d%m%Y')+'.svg'
         plt.savefig(os.path.join(proj_dir, 'img', figname))
-        #plt.savefig(os.path.join('/home/sebastin/tmp/', figname))
 
 
 def print_voi_stats(df_voi_corr, seeds = ['Acc', 'dPut', 'vPut'], vois = ['lvPFC_R', 'lPFC_R', 'dPFC_L'], args=None):
@@ -771,7 +782,10 @@ def compute_non_parametric_within_groups_mask(con_flist, pat_flist, design_matri
 
 
 def non_parametric_analysis(subjs, seed, metric, pre_metric, masks=[], args=None):
-    """ Performs a non-parametric inference """
+    """ Performs a non-parametric inference in nilearn
+        Note: this was experimental, worked but the extraction of stats and clusters do not
+        follow standards widely used in the imaging community.
+    """
     post_metric = 'brainFWHM{}mm'.format(str(int(args.brain_smoothing_fwhm)))
     in_dir = os.path.join(proj_dir, 'postprocessing/SPM/input_imgs/Harrison2009Rep/', pre_metric, metric, post_metric)
 
@@ -932,10 +946,6 @@ def create_contrast_vector(subjs, args):
         suffix += '_group_by_hemi'
         if args.paired_design:
           cv = []
-          #cv.append(np.ones([1,1+n_con+n_pat]))
-          #cv.append(np.concatenate([-np.ones([1,1]).ravel(), np.ones([1,n_con+n_pat]).ravel()]))
-          #cv.append(np.concatenate([-np.ones([1,1]).ravel(), -np.ones([1,n_con+n_pat]).ravel()]))
-          #cv.append(np.concatenate([np.ones([1,1]).ravel(), -np.ones([1,n_con+n_pat]).ravel()]))
           cv.append(np.concatenate([np.ones((1,2*n_con)).ravel(), -np.ones((1,2*n_pat)).ravel()]))
           cv.append(np.concatenate([np.ones((1,n_con)).ravel(), -np.ones((1,n_con)).ravel(), np.ones((1,n_pat)).ravel(), -np.ones((1,n_pat)).ravel()]))
           cv.append(np.concatenate([np.ones((1,n_con)).ravel(), -np.ones((1,n_con)).ravel(), -np.ones((1,n_pat)).ravel(), np.ones((1,n_pat)).ravel()]))
@@ -946,20 +956,19 @@ def create_contrast_vector(subjs, args):
           # group main effect
           cv[0,:n_con] = 1
           cv[0,n_con:n_pat] = -1
-          #cv[1,:n_con] = -1
-          #cv[1,n_con:n_pat] = 1
+          cv[1,:n_con] = -1
+          cv[1,n_con:n_pat] = 1
           # session  main effect
-          #cv[2,-2] = 1
-          #cv[3,-2] = -1
+          cv[2,-2] = 1
+          cv[3,-2] = -1
           # interactions
-          #cv[4,-1] = 1
-          #cv[5,-1] = -1
+          cv[4,-1] = 1
+          cv[5,-1] = -1
           # F test
-          #cm = np.array([[1,0,0,0,0,0], [0,1,0,0,0,0], [0,0,1,0,0,0], [0,0,0,1,0,0], [0,0,0,0,1,0], [0,0,0,0,0,1]])
-          cm = np.array([[1]])
-          grp = np.ones((2*n_con+2*n_pat,1))
-          #grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
-          suffix += '_repeated2wayANOVA_grp111'
+          cm = np.array([[1,1,0,0,0,0], [0,0,1,1,0,0], [0,0,0,0,1,1]])
+          #grp = np.ones((2*n_con+2*n_pat,1))
+          grp = np.concatenate([np.arange(n_con), np.arange(n_con), np.arange(n_con,n_con+n_pat), np.arange(n_con,n_con+n_pat)])+1 # offset of 1 because not sure what 0 would do
+          suffix += '_repeated2wayANOVA'
         else:
           cv = np.array([[1, 1, -1, -1]])
           cm = np.array([[1]])
@@ -992,10 +1001,6 @@ def use_randomise(subjs, seed, metric, atlas, args=None):
     # create 4D image from list of 3D
     imgs_4D = nilearn.image.concat_imgs(flist, auto_resample=True)
     dm = create_design_matrix(subjs, args)
-
-    # import mask path
-    #mask_path = os.path.join(proj_dir, 'utils', 'frontal_'+seed+'_mapping.nii.gz')
-    #mask = resample_to_img(mask_path, imgs_4D, interpolation='nearest')
 
     # outputs/savings to file
     out_dir = os.path.join(proj_dir, 'postprocessing/SPM/outputs/Harrison2009Rep/smoothed_but_sphere_seed_based/', metric, fwhm, seed, 'randomise')
@@ -1044,7 +1049,6 @@ def use_randomise(subjs, seed, metric, atlas, args=None):
         out_file = os.path.join(out_dir, seed+'_outputs_n'+str(args.n_perm)+'_c'+str(int(args.cluster_thresh*10))+suffix)
         cmd = 'randomise -i '+in_file+' -o '+out_file+' -d '+dmat+' -t '+dcon+' -m '+mask_file+' -n '+str(args.n_perm)+' -c '+str(args.cluster_thresh)+' --uncorrp'
     print(cmd)
-    #pdb.set_trace()
     os.system(cmd)
 
 
@@ -1126,7 +1130,7 @@ def plot_within_group_masks(subrois, glm_results, args):
                     cut_coords=cut_coords[subroi], draw_cross=False, cmap='Oranges', colorbar=False)
 
 if __name__=='__main__':
-
+    # options
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_figs', default=False, action='store_true', help='save figures')
     parser.add_argument('--save_outputs', default=False, action='store_true', help='save outputs')
@@ -1176,14 +1180,15 @@ if __name__=='__main__':
     parser.add_argument('--n_inflate', default=1, type=int, action='store', help='number of mm to inflate mask')
     args = parser.parse_args()
 
+    # if a subject or list of subjects  is given (e.g. if running on HCP), then only process them
     if args.subj!=None:
         subjs = [args.subj]
+    # otherwise process all subjects
     else:
         subjs = pd.read_table(os.path.join(code_dir, 'subject_list_all.txt'), names=['name'])['name']
 
     # options
     atlases= ['Harrison2009'] #['schaefer100_tianS1', 'schaefer200_tianS2', 'schaefer400_tianS4'] #schaefer400_harrison2009
-    #metrics = ['detrend_filtered', 'detrend_gsr_filtered']
     pre_metric = 'seed_not_smoothed' #'unscrubbed_seed_not_smoothed'
     metrics = ['detrend_gsr_filtered_scrubFD05'] #'detrend_gsr_smooth-6mm', 'detrend_gsr_filtered_scrubFD06'
 
@@ -1237,6 +1242,7 @@ if __name__=='__main__':
             if args.plot_figs:
                 plot_randomise_outputs(subjs, subroi, metric, args)
 
+    # parametric approach
     if args.run_second_level:
         out_dir = os.path.join(proj_dir, 'postprocessing', 'glm', pre_metric)
         os.makedirs(out_dir, exist_ok=True)
@@ -1246,6 +1252,7 @@ if __name__=='__main__':
         if args.plot_within_group_masks:
             plot_within_group_masks(subrois, glm_results, args)
 
+    # correlation between seeds and significant clusters
     if args.compute_voi_corr:
         df_voi_corr = compute_voi_corr(subjs, seeds=subrois, vois=vois, args=args)
         print_voi_stats(df_voi_corr, seeds=subrois, vois=vois, args=args)
@@ -1255,6 +1262,7 @@ if __name__=='__main__':
             with open(os.path.join(proj_dir, 'postprocessing', 'df_voi_corr.pkl'), 'wb') as f:
                 pickle.dump(df_voi_corr,f)
 
+    # non-parametric using nilearn (experimental)
     if args.non_parametric_analysis:
         suffix = 'non_parametric'
         if args.two_sided_within_group:
@@ -1272,6 +1280,7 @@ if __name__=='__main__':
             with gzip.open(os.path.join(proj_dir, 'postprocessing', 'non_parametric', suffix+'.pkl.gz'), 'wb') as f:
                 pickle.dump(np_results,f)
 
+    # FC bar/box plots
     if args.within_mask_corr:
         df_mask_corr = compute_FC_within_masks(subjs, np_results, args=args)
         if args.plot_figs:

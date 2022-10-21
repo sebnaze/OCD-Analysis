@@ -37,10 +37,10 @@ echo "Current subject: " ${subj}
 echo 'Denoising '${subj}
 python ${proj_dir}docs/code/preprocessing/post_fmriprep_denoising.py ${subj}
 
-#echo 'Preparing for DCM '${subj}
-#mkdir -p ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/
-#fslsplit ${proj_dir}data/derivatives/post-fmriprep-fix/${subj}/func/${subj}_task-rest_space-MNI152NLin2009cAsym_desc-detrend_gsr_smooth-6mm.nii.gz  ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/${subj}_task-rest_space-MNI152NLin2009cAsym_desc-detrend_gsr_smooth-6mm
-#gzip -d ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/*
+echo 'Preparing for DCM '${subj}
+mkdir -p ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/
+fslsplit ${proj_dir}data/derivatives/post-fmriprep-fix/${subj}/func/${subj}_task-rest_space-MNI152NLin2009cAsym_desc-detrend_gsr_smooth-6mm.nii.gz  ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/${subj}_task-rest_space-MNI152NLin2009cAsym_desc-detrend_gsr_smooth-6mm
+gzip -d ${pp_dir}${subj}/spm/scans/detrend_gsr_smooth6mm/*
 
 echo 'Preparing '$subj' for SPM / seed-to-voxel analysis'
 python ${proj_dir}docs/code/functional/seed_to_voxel_analysis.py --subj $subj --compute_seed_corr --unzip_corr_maps --merge_LR_hemis --n_jobs 1 --brain_smoothing_fwhm 8 --prep_fsl_randomise
